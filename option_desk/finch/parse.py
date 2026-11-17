@@ -63,7 +63,7 @@ _EXPLICIT_PUT = re.compile(
     r"cash[\s_-]*secured|(?<![a-z])csp(?![a-z])|(?<![a-z])puts?(?![a-z])|现金担保|卖\s*put",
     re.IGNORECASE,
 )
-_WEAK_CALL = re.compile(r"(?<![a-z])calls?(?![a-z])", re.IGNORECASE)
+_WEAK_CALL = re.compile(r"(?<![a-z])calls?(?![a-z])|套牢|被套", re.IGNORECASE)
 _SHARES = re.compile(_NUMBER + r"\s*(?:股|shares?(?![a-z])|sh(?![a-z]))", re.IGNORECASE)
 _SHARES_LABELED = re.compile(
     r"(?:持股|持有|shares?\s*(?:held|owned)?|holding|hold|own)\s*(?:数量|数)?\s*(?:是|为|:|：|=)?\s*"
@@ -102,6 +102,8 @@ class DeskRequest:
     delta: float = DEFAULT_DELTA
     language: str = "en"
     dropped: list[str] = field(default_factory=list)
+    # Fields the user left out that run on defaults: shares=100, cost_basis unchecked, cash=1 contract per ticker.
+    assumed: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -295,15 +297,30 @@ def parse_texts(texts: list[str], max_tickers: int) -> ParseResult:
         result.problems.append("delta")
     if request.mode == "call":
         if request.shares is None:
-            result.missing.append("shares")
+            request.shares = float(MIN_RUN_SHARES)
+            request.assumed.append("shares")
         elif not MIN_RUN_SHARES <= request.shares <= MAX_RUN_SHARES:
             result.problems.append("shares")
         if request.cost_basis is None:
-            result.missing.append("cost_basis")
+            request.assumed.append("cost_basis")
         elif not 0 < request.cost_basis <= MAX_COST_BASIS:
             result.problems.append("cost_basis")
     elif request.cash is None:
-        result.missing.append("cash")
+        request.assumed.append("cash")
     elif not MIN_CASH <= request.cash <= MAX_CASH:
         result.problems.append("cash")
     return result
+
+
+_GUIDE_TOPICS = (
+    ("wheel", re.compile(r"轮动|轮转|车轮|(?<![a-z])wheel", re.IGNORECASE)),
+    ("income", re.compile(r"收租|期权租|权利金|收多少|(?<![a-z])(?:income|premium)", re.IGNORECASE)),
+    ("risk", re.compile(r"风险|危险|会亏|亏损|(?<![a-z])(?:risk|risky|safe|lose|loss)", re.IGNORECASE)),
+    ("beginner", re.compile(r"新手|入门|小白|从哪|怎么开始|(?<![a-z])(?:beginner|newbie|start|learn)", re.IGNORECASE)),
+)
+
+
+def guide_topics(texts: list[str]) -> list[str]:
+    """Strategy questions a ticker-less request asks about, in a fixed order."""
+    joined = "\n".join(texts)
+    return [name for name, pattern in _GUIDE_TOPICS if pattern.search(joined)]

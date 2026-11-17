@@ -9,7 +9,7 @@ from datetime import date, datetime, timezone
 
 from option_desk.config import apply_run_overrides, get_settings
 from option_desk.finch.config import FinchConfig
-from option_desk.finch.parse import DeskRequest
+from option_desk.finch.parse import MAX_CASH, DeskRequest
 from option_desk.finch.render import render_run
 from option_desk.finch.store import COMPLETED, EXPIRED, FAILED, RUNNING, WORKING, Store
 from option_desk.finch.text import ft
@@ -130,15 +130,17 @@ class Runner:
         if started is None:
             return
         call = request.mode == "call"
+        unsized = not call and request.cash is None
         settings = apply_run_overrides(
             get_settings(),
             tickers=request.tickers,
             delta=request.delta,
-            cash=None if call else request.cash,
+            cash=None if call else (MAX_CASH if unsized else request.cash),
             language=lang,
             desk_mode=request.mode,
             shares=request.shares if call else None,
-            cost_basis=request.cost_basis if call else None,
+            cost_basis=(request.cost_basis or 0.0) if call else None,
+            csp_one_contract=unsized,
         )
         log.info("finch task %s started: mode=%s tickers=%s", merchant_task_id, request.mode, request.tickers)
         progress = _Progress(request)

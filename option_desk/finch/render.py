@@ -32,18 +32,31 @@ def render_capabilities(lang: str, max_tickers: int) -> str:
     return ft(lang, "capability", n=max_tickers)
 
 
+def render_guide(request: DeskRequest, topics: list[str], max_tickers: int) -> str:
+    """Answer for a request with no ticker: strategy notes for the topics asked about, then how to run the desk."""
+    lang = normalize_lang(request.language)
+    if not topics:
+        return render_capabilities(lang, max_tickers)
+    cash = _money(request.cash) if request.cash else ("50000" if lang == "en" else "5万")
+    parts = [ft(lang, f"guide_{topic}") for topic in topics]
+    parts.append(ft(lang, "guide_run", n=max_tickers, put_example=ft(lang, "guide_put_example", cash=cash)))
+    return "\n\n".join(parts) + "\n"
+
+
 def _inputs(request: DeskRequest, lang: str) -> str:
     tickers = ", ".join(request.tickers)
     if request.mode == "call":
+        cost = ft(lang, "not_given") if request.cost_basis is None else f"${request.cost_basis:,.2f}"
         return ft(
             lang,
             "inputs_call",
             tickers=tickers,
             shares=_money(request.shares or 0),
-            cost=f"{request.cost_basis or 0:,.2f}",
+            cost=cost,
             delta=f"{request.delta:.2f}",
         )
-    return ft(lang, "inputs_put", tickers=tickers, cash=_money(request.cash or 0), delta=f"{request.delta:.2f}")
+    cash = ft(lang, "not_given") if request.cash is None else f"${_money(request.cash)}"
+    return ft(lang, "inputs_put", tickers=tickers, cash=cash, delta=f"{request.delta:.2f}")
 
 
 def _payoff(decision: TickerDecision, lang: str) -> str | None:
@@ -66,7 +79,7 @@ def _payoff(decision: TickerDecision, lang: str) -> str | None:
     return _kv(lang, t(lang, "md_payoff"), body)
 
 
-def _decision_lines(decision: TickerDecision, lang: str) -> list[str]:
+def _decision_lines(decision: TickerDecision, lang: str, *, cost_known: bool = True) -> list[str]:
     head = f"**{decision.ticker} — {decision.action.value}**"
     bits = [
         decision.structure.value if decision.structure else None,
@@ -80,10 +93,11 @@ def _decision_lines(decision: TickerDecision, lang: str) -> list[str]:
     if decision.action == DeskAction.OPEN:
         if decision.premium_tradeoff:
             lines.append(f"- {_kv(lang, t(lang, 'md_tradeoff'), decision.premium_tradeoff)}")
-        payoff = _payoff(decision, lang)
-        if payoff:
-            lines.append(f"- {payoff}")
-        lines.append(f"- {ft(lang, 'assign_ok' if decision.assignment_ok else 'assign_not_ok')}")
+        if cost_known:
+            payoff = _payoff(decision, lang)
+            if payoff:
+                lines.append(f"- {payoff}")
+            lines.append(f"- {ft(lang, 'assign_ok' if decision.assignment_ok else 'assign_not_ok')}")
     lines.append("")
     return lines
 
@@ -161,10 +175,14 @@ def render_run(run: DeskRun, request: DeskRequest) -> str:
             ),
             "",
         ]
+    lines += [f"> {ft(lang, f'assumed_{name}')}" for name in request.assumed]
+    if request.assumed:
+        lines.append("")
 
+    cost_known = not (request.mode == "call" and request.cost_basis is None)
     lines.append(f"#### {ft(lang, 'sec_decision')}")
     for decision in run.desk.decisions:
-        lines.extend(_decision_lines(decision, lang))
+        lines.extend(_decision_lines(decision, lang, cost_known=cost_known))
     decided = {decision.ticker for decision in run.desk.decisions}
     for ticker in request.tickers:
         if ticker not in decided:
@@ -201,7 +219,7 @@ def render_run(run: DeskRun, request: DeskRequest) -> str:
         lines.append("")
 
     footer = [t(lang, "md_chain"), ft(lang, "fetched", ts=run.fetched_at.strftime("%Y-%m-%d %H:%M"))]
-    if any(decision.payoff for decision in run.desk.decisions):
+    if cost_known and any(decision.payoff for decision in run.desk.decisions):
         footer.append(t(lang, "md_payoff_note"))
     lines += ["---", f"_{' '.join(footer)}_", "", f"**{t(lang, 'md_disclaimer')}**"]
     return "\n".join(lines).strip() + "\n"

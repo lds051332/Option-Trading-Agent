@@ -154,6 +154,8 @@ class Settings(BaseSettings):
         default=0,
         validation_alias=AliasChoices("OPTION_DESK_COST_BASIS", "cost_basis"),
     )
+    # Cash unknown: size every CSP bucket at one contract instead of from cash.
+    csp_one_contract: bool = False
     desk_mode: str = Field(
         default="put",
         validation_alias=AliasChoices("OPTION_DESK_MODE", "desk_mode"),
@@ -253,6 +255,7 @@ def apply_run_overrides(
     desk_mode: str | None = None,
     shares: float | None = None,
     cost_basis: float | None = None,
+    csp_one_contract: bool | None = None,
 ) -> Settings:
     """Per-run overlay. Does not mutate cached process settings."""
     updates: dict[str, object] = {}
@@ -276,6 +279,8 @@ def apply_run_overrides(
         updates["shares"] = float(shares)
     if cost_basis is not None:
         updates["cost_basis"] = float(cost_basis)
+    if csp_one_contract is not None:
+        updates["csp_one_contract"] = bool(csp_one_contract)
     return settings.model_copy(update=updates) if updates else settings
 
 

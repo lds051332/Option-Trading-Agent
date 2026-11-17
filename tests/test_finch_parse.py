@@ -1,6 +1,6 @@
 import pytest
 
-from option_desk.finch.parse import DeskRequest, is_capability_probe, parse_texts
+from option_desk.finch.parse import DeskRequest, guide_topics, is_capability_probe, parse_texts
 
 
 def _parse(*texts: str, max_tickers: int = 3):
@@ -67,9 +67,25 @@ def test_too_many_tickers_are_trimmed_and_reported():
     assert req.cash == 100_000
 
 
-def test_missing_fields_are_listed():
-    assert _parse("帮我看看").missing == ["tickers", "cash"]
-    assert _parse("covered call on AAPL").missing == ["shares", "cost_basis"]
+def test_only_tickers_are_required_and_the_rest_runs_on_defaults():
+    assert _parse("帮我看看").missing == ["tickers"]
+    call = _parse("Screen covered calls options expiring in 7 days for NVDA")
+    assert call.complete
+    assert (call.request.mode, call.request.shares, call.request.cost_basis) == ("call", 100, None)
+    assert call.request.assumed == ["shares", "cost_basis"]
+    put = _parse("特斯拉 卖put")
+    assert put.complete
+    assert (put.request.tickers, put.request.cash, put.request.assumed) == (["TSLA"], None, ["cash"])
+    assert _parse("NVDA 卖put 现金5万").request.assumed == []
+    assert _parse("苹果套牢了 咋办").request.mode == "call"
+
+
+def test_guide_topics():
+    assert guide_topics(["轮动策略 咋玩"]) == ["wheel"]
+    assert guide_topics(["收租 风险大么"]) == ["income", "risk"]
+    assert guide_topics(["期权 新手 从哪开始"]) == ["beginner"]
+    assert guide_topics(["How does the wheel work? Is it risky?"]) == ["wheel", "risk"]
+    assert guide_topics(["现金五万 咋配"]) == []
 
 
 def test_out_of_range_values_become_problems():

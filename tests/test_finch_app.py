@@ -113,7 +113,7 @@ def _no_nulls(value):
 def make_desk(tmp_path, monkeypatch):
     stores = []
 
-    def build(pipeline=None, **overrides):
+    def build(pipeline=None, clock=time.time, **overrides):
         config = FinchConfig(
             key_id=KEY_ID,
             request_secret=REQUEST_SECRET,
@@ -130,7 +130,7 @@ def make_desk(tmp_path, monkeypatch):
         store = Store(config.db_path)
         stores.append(store)
         runner = Runner(store, config, pipeline=pipeline or replay_pipeline)
-        client = TestClient(create_finch_app(config, store, runner))
+        client = TestClient(create_finch_app(config, store, runner, clock=clock))
         return Desk(client, runner, store, calls)
 
     yield build
@@ -194,12 +194,12 @@ def test_non_task_mode_is_rejected(make_desk):
 
 def test_input_required_then_answer_runs_the_desk(make_desk):
     desk = make_desk()
-    task_id = desk.invoke("帮我看看").json()["merchant_task_id"]
+    task_id = desk.invoke("NVDA 卖put 现金500").json()["merchant_task_id"]
     asked = desk.poll(task_id).json()
     assert asked["status"] == "input_required"
-    assert "标的代码" in asked["questions"][0]["question"]
+    assert "现金需在" in asked["questions"][0]["question"]
 
-    reply = desk.answer(task_id, "NVDA 卖put 现金5万")
+    reply = desk.answer(task_id, "现金5万")
     assert reply.status_code == 202
     assert reply.json() == {"protocol_version": "2.0", "status": "accepted", "merchant_task_id": task_id}
     queued = desk.poll(task_id).json()
@@ -225,9 +225,47 @@ def test_covered_call_request_reaches_the_pipeline_as_call_mode(make_desk):
     assert (settings.desk_mode, settings.shares, settings.cost_basis) == ("call", 300, 180)
 
 
+def test_covered_call_screen_runs_on_default_shares_without_a_question(make_desk):
+    desk = make_desk()
+    task_id = desk.invoke("Screen covered calls options expiring in 7 days for NVDA").json()["merchant_task_id"]
+    assert desk.poll(task_id).json()["status"] == "queued"
+    desk.runner.process(task_id)
+    settings = desk.calls[0]["settings"]
+    assert desk.calls[0]["tickers"] == ["NVDA"]
+    assert (settings.desk_mode, settings.shares, settings.cost_basis) == ("call", 100, 0)
+    text = desk.poll(task_id).json()["message"]["content"][0]["text"]
+    assert "assumes 100 shares" in text and "cost not given" in text
+    assert "Expiration P/L" not in text
+
+
+def test_put_without_cash_is_sized_at_one_contract(make_desk):
+    desk = make_desk()
+    task_id = desk.invoke("英伟达 卖put 收多少").json()["merchant_task_id"]
+    desk.runner.process(task_id)
+    settings = desk.calls[0]["settings"]
+    assert desk.calls[0]["tickers"] == ["NVDA"]
+    assert settings.csp_one_contract is True and settings.desk_mode == "put"
+    text = desk.poll(task_id).json()["message"]["content"][0]["text"]
+    assert "现金 未提供" in text and "每个标的按 1 张合约估算" in text
+
+
+def test_tickerless_question_gets_a_guide_instead_of_a_question(make_desk):
+    desk = make_desk()
+    task_id = desk.invoke("轮动策略 咋玩").json()["merchant_task_id"]
+    snap = desk.poll(task_id).json()
+    assert snap["status"] == "completed"
+    text = snap["message"]["content"][0]["text"]
+    assert "Wheel（轮动）怎么玩" in text and "NVDA MSFT 卖put 现金5万" in text
+    assert desk.calls == []
+
+    plain = desk.poll(desk.invoke("帮我看看").json()["merchant_task_id"]).json()
+    assert plain["status"] == "completed"
+    assert "两个决策台" in plain["message"]["content"][0]["text"]
+
+
 def test_answer_idempotency(make_desk):
     desk = make_desk()
-    task_id = desk.invoke("帮我看看").json()["merchant_task_id"]
+    task_id = desk.invoke("NVDA 卖put 现金500").json()["merchant_task_id"]
     first = desk.answer(task_id, "还没想好", key="k1")
     again = desk.answer(task_id, "还没想好", key="k1")
     assert first.status_code == again.status_code == 202
@@ -245,7 +283,7 @@ def test_answer_when_not_waiting_is_a_conflict(make_desk):
 
 def test_input_rounds_are_bounded(make_desk):
     desk = make_desk(max_input_rounds=2)
-    task_id = desk.invoke("帮我看看").json()["merchant_task_id"]
+    task_id = desk.invoke("NVDA 卖put 现金500").json()["merchant_task_id"]
     desk.answer(task_id, "嗯")
     assert desk.poll(task_id).json()["status"] == "input_required"
     desk.answer(task_id, "还是不知道")
@@ -288,7 +326,7 @@ def test_queue_limit_refuses_before_accepting(make_desk):
 def test_past_deadline_expires(make_desk):
     desk = make_desk()
     past = datetime.now(timezone.utc) - timedelta(seconds=5)
-    task_id = desk.invoke("帮我看看", deadline=past).json()["merchant_task_id"]
+    task_id = desk.invoke("NVDA 卖put 现金5万", deadline=past).json()["merchant_task_id"]
     assert desk.poll(task_id).json()["status"] == "expired"
 
 
@@ -305,21 +343,34 @@ def test_spoken_cash_runs_without_a_follow_up(make_desk):
 def test_unanswered_question_fails_before_the_deadline(make_desk):
     desk = make_desk()
     soon = datetime.now(timezone.utc) + timedelta(seconds=20)
-    task_id = desk.invoke("帮我看看", deadline=soon).json()["merchant_task_id"]
+    task_id = desk.invoke("NVDA 卖put 现金500", deadline=soon).json()["merchant_task_id"]
     snap = desk.poll(task_id).json()
     assert snap["status"] == "failed"
     assert snap["error"]["code"] == "insufficient_input"
-    assert "标的代码" in snap["error"]["message"]
-    assert "现金" in snap["error"]["message"]
-    assert desk.answer(task_id, "NVDA 卖put 现金5万").status_code == 409
+    assert "没有收到补充信息" in snap["error"]["message"]
+    assert "现金需在" in snap["error"]["message"]
+    assert desk.answer(task_id, "现金5万").status_code == 409
     assert desk.calls == []
 
     later = datetime.now(timezone.utc) + timedelta(minutes=10)
-    waiting = desk.invoke("帮我看看", deadline=later).json()["merchant_task_id"]
+    waiting = desk.invoke("NVDA 卖put 现金500", deadline=later).json()["merchant_task_id"]
     assert desk.poll(waiting).json()["status"] == "input_required"
 
     queued = desk.invoke("NVDA 卖put 现金5万", deadline=soon).json()["merchant_task_id"]
     assert desk.poll(queued).json()["status"] == "queued"
+
+
+def test_unanswered_question_gives_up_after_the_idle_window(make_desk):
+    offset = [0.0]
+    desk = make_desk(clock=lambda: time.time() + offset[0])
+    later = datetime.now(timezone.utc) + timedelta(minutes=10)
+    task_id = desk.invoke("NVDA 卖put 现金500", deadline=later).json()["merchant_task_id"]
+    offset[0] = 140
+    assert desk.poll(task_id).json()["status"] == "input_required"
+    offset[0] = 160
+    snap = desk.poll(task_id).json()
+    assert snap["status"] == "failed"
+    assert snap["error"]["code"] == "insufficient_input"
 
 
 def test_pipeline_error_fails_without_leaking_details(make_desk):

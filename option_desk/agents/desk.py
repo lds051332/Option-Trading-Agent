@@ -242,18 +242,29 @@ def snapshot_prompt(
     shares: float = 100,
     cost_basis: float = 0,
     market: MarketRegime | None = None,
+    one_contract: bool = False,
 ) -> str:
     if str(mode).lower() == "call":
+        basis = (
+            f"Cost basis: ${cost_basis:,.2f} per share"
+            if cost_basis > 0
+            else "Cost basis: not provided; set assignment_ok true and do not discuss cost basis"
+        )
         blocks = [
             f"Shares held: {shares:.0f} (max {int(shares) // 100} covered-call contracts)",
-            f"Cost basis: ${cost_basis:,.2f} per share",
+            basis,
             "",
             _market_brief(market),
             "",
         ]
     else:
+        cash_line = (
+            "Cash available: not provided; every CSP candidate is sized at 1 contract, judge each ticker on its own"
+            if one_contract
+            else f"Cash available: ${cash:,.0f}"
+        )
         blocks = [
-            f"Cash available: ${cash:,.0f}",
+            cash_line,
             "",
             _market_brief(market),
             "",
@@ -874,6 +885,7 @@ def trace_desk(
         shares=float(getattr(settings, "shares", 100) or 100),
         cost_basis=float(getattr(settings, "cost_basis", 0) or 0),
         market=market,
+        one_contract=bool(getattr(settings, "csp_one_contract", False)),
     )
     messages = [
         SystemMessage(content=system + language_instruction(lang)),

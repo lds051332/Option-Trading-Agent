@@ -440,7 +440,7 @@ def build_buckets(
         used_ids.add(short.contract_id)
         long = find_long_put(quotes, short, settings.spread_width)
         spread = _spread_contracts(settings, short, long) if long else None
-        contracts = _csp_contracts(cash, short.strike)
+        contracts = 1 if settings.csp_one_contract else _csp_contracts(cash, short.strike)
         buckets[bucket] = BucketCandidate(
             bucket=bucket,
             target_delta=target,

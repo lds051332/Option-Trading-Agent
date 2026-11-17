@@ -13,8 +13,8 @@ from typing import Any
 
 from option_desk.config import MAX_RUN_DELTA, MIN_RUN_DELTA
 from option_desk.finch.config import FinchConfig
-from option_desk.finch.parse import ParseResult, detect_language, is_capability_probe, parse_texts
-from option_desk.finch.render import render_capabilities
+from option_desk.finch.parse import ParseResult, detect_language, guide_topics, is_capability_probe, parse_texts
+from option_desk.finch.render import render_capabilities, render_guide
 from option_desk.finch.runner import Runner, utc_stamp
 from option_desk.finch.store import (
     CANCELED,
@@ -37,6 +37,8 @@ PROTOCOL_VERSION = "2.0"
 QUESTION_ID = "desk_inputs"
 # Report a still-open question before the platform's own deadline closes the invocation.
 INPUT_GIVE_UP_SECONDS = 30
+# Finch callers almost never answer a follow-up; stop waiting this long after the last question.
+INPUT_IDLE_SECONDS = 150
 
 
 class RequestRejected(Exception):
@@ -93,13 +95,8 @@ def merchant_task_id_for(invocation_id: str) -> str:
 def question_text(result: ParseResult, max_tickers: int) -> str:
     lang = result.request.language
     lines = [ft(lang, "ask_intro")]
-    labels = {
-        "tickers": ft(lang, "ask_tickers", n=max_tickers),
-        "cash": ft(lang, "ask_cash"),
-        "shares": ft(lang, "ask_shares"),
-        "cost_basis": ft(lang, "ask_cost"),
-    }
-    lines.extend(labels[name] for name in result.missing)
+    if "tickers" in result.missing:
+        lines.append(ft(lang, "ask_tickers", n=max_tickers))
     problems = {
         "delta": ft(lang, "problem_delta", lo=MIN_RUN_DELTA, hi=MAX_RUN_DELTA),
         "cash": ft(lang, "problem_cash"),
@@ -223,7 +220,12 @@ class TaskService:
                 task.completed_at = utc_stamp(now)
             else:
                 result = parse_texts(texts, self._config.max_tickers)
-                if result.complete:
+                if "tickers" in result.missing:
+                    task.status = COMPLETED
+                    task.message = render_guide(result.request, guide_topics(texts), self._config.max_tickers)
+                    task.progress_percent = 100
+                    task.completed_at = utc_stamp(now)
+                elif result.complete:
                     busy = self._overloaded(now)
                     if busy is not None:
                         log.info("finch invocation %s refused: %s", invocation_id, busy.code)
@@ -256,9 +258,8 @@ class TaskService:
     def _give_up_unanswered(self, task: Task) -> Task:
         """Fail an unanswered question while the platform can still record our error."""
         now = self._clock()
-        if task.status != INPUT_REQUIRED or not (
-            task.deadline_at - INPUT_GIVE_UP_SECONDS <= now <= task.deadline_at
-        ):
+        give_up_at = min(task.updated_at + INPUT_IDLE_SECONDS, task.deadline_at - INPUT_GIVE_UP_SECONDS)
+        if task.status != INPUT_REQUIRED or now < give_up_at:
             return task
         result = parse_texts(task.texts, self._config.max_tickers)
         lang = result.request.language

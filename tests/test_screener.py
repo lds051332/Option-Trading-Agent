@@ -88,6 +88,10 @@ def test_build_buckets_csp_qty_and_two_rungs():
     assert std.spread is not None
     assert std.spread.long.strike < std.csp.strike
 
+    unsized = build_buckets(quotes, cash=10_000_000, settings=settings.model_copy(update={"csp_one_contract": True}))
+    assert unsized[DeltaBucket.STANDARD].csp_contracts == 1
+    assert unsized[DeltaBucket.STANDARD].assignment_cash == 16_000
+
 
 def test_build_call_buckets_qty_from_shares():
     from option_desk.chain.screener import build_call_buckets
