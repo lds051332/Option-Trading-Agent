@@ -50,7 +50,7 @@ First visit picks Chinese for a mainland China IP and English otherwise. The in-
 ## Install
 
 ```bash
-git clone https://github.com/lds051332/OptionTradingAgent.git
+git clone https://github.com/lds051332/Option-Trading-Agent.git OptionTradingAgent
 cd OptionTradingAgent
 python -m venv .venv
 ```
@@ -146,7 +146,7 @@ cd web && npm install && npm run dev
 ## Web (cloud Linux)
 
 ```bash
-git clone https://github.com/lds051332/OptionTradingAgent.git
+git clone https://github.com/lds051332/Option-Trading-Agent.git OptionTradingAgent
 cd OptionTradingAgent
 cp .env.example .env
 # edit .env: DEEPSEEK_API_KEY

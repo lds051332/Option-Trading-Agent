@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from option_desk.finch.parse import DeskRequest
 from option_desk.finch.text import ft
-from option_desk.i18n import localize_hard_reason, normalize_lang, t
+from option_desk.i18n import iv_regime_label, localize_hard_reason, market_label, normalize_lang, t
 from option_desk.report import history_summary, trend_summary
 from option_desk.schemas import (
     BucketCandidate,
@@ -144,7 +144,7 @@ def _snapshot_lines(snap: TickerSnapshot, lang: str) -> list[str]:
         lines.append(_bucket_line(bucket, snap.buckets.get(bucket), snap, lang))
     ctx = snap.iv_context
     if ctx is not None:
-        iv = f"ATM {_pct(ctx.atm_iv)} · HV20 {_pct(ctx.hv_20)} · HV60 {_pct(ctx.hv_60)} · {ctx.regime.value}"
+        iv = f"ATM {_pct(ctx.atm_iv)} · HV20 {_pct(ctx.hv_20)} · HV60 {_pct(ctx.hv_60)} · {iv_regime_label(ctx.regime, lang)}"
         if ctx.expected_move_pct is not None:
             dollars = f"${ctx.expected_move:.2f}" if ctx.expected_move is not None else "—"
             iv = f"{iv}; {t(lang, 'md_em')} ±{ctx.expected_move_pct:.1%} ({dollars}, {ctx.expected_move_dte or '?'} DTE)"
@@ -205,7 +205,7 @@ def render_run(run: DeskRun, request: DeskRequest) -> str:
     if run.market:
         lines.append(f"#### {t(lang, 'md_market')}")
         vix = f" · VIX {run.market.vix:.1f}" if run.market.vix is not None else ""
-        lines.append(f"- **{run.market.label.value}**{vix}")
+        lines.append(f"- **{market_label(run.market.label, lang)}**{vix}")
         if run.market.why:
             lines.append(f"- {run.market.why}")
         lines.append("")

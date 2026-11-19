@@ -177,6 +177,15 @@ UI = {
         "md_range20": "20D close range",
         "md_breach": "hist. breach {rate} ({n} × {h}d windows)",
         "md_beyond_range": "beyond 20D range",
+        "iv_label_low": "low",
+        "iv_label_normal": "normal",
+        "iv_label_high": "high",
+        "iv_label_rich": "rich",
+        "iv_label_unknown": "unknown",
+        "trend_label_up": "up",
+        "trend_label_flat": "flat",
+        "trend_label_down": "down",
+        "trend_label_unknown": "unknown",
         "score": "Score",
         "market": "Market",
         "iv_vs_hv": "IV vs HV",
@@ -305,6 +314,15 @@ UI = {
         "md_range20": "20 日收盘区间",
         "md_breach": "历史击穿 {rate}（{n} 个 {h} 日窗口）",
         "md_beyond_range": "在 20 日区间外",
+        "iv_label_low": "便宜",
+        "iv_label_normal": "正常",
+        "iv_label_high": "偏贵",
+        "iv_label_rich": "很贵",
+        "iv_label_unknown": "未知",
+        "trend_label_up": "上升",
+        "trend_label_flat": "震荡",
+        "trend_label_down": "下降",
+        "trend_label_unknown": "未知",
         "score": "评分",
         "market": "市场",
         "iv_vs_hv": "IV vs HV",
@@ -319,6 +337,30 @@ def t(lang: str, key: str, **kwargs: object) -> str:
     if kwargs:
         return text.format(**kwargs)
     return text
+
+
+def _enum_value(value: object) -> str:
+    return str(getattr(value, "value", value))
+
+
+def iv_regime_label(regime: object, lang: str) -> str:
+    return t(lang, f"iv_label_{_enum_value(regime)}")
+
+
+def trend_label(label: object, lang: str) -> str:
+    return t(lang, f"trend_label_{_enum_value(label)}")
+
+
+_MARKET_LABEL_KEYS = {
+    "risk_on": "regime_label_on",
+    "neutral": "regime_label_neutral",
+    "caution": "regime_label_caution",
+    "risk_off": "regime_label_off",
+}
+
+
+def market_label(label: object, lang: str) -> str:
+    return t(lang, _MARKET_LABEL_KEYS.get(_enum_value(label), "regime_label_neutral"))
 
 
 def localize_hard_reason(reason: str, lang: str) -> str:

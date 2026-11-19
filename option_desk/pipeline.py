@@ -12,7 +12,7 @@ from option_desk.chain.screener import screen_ticker, uses_last_print
 from option_desk.config import Settings
 from option_desk.events.scout import classify_scout_hits, scout_queries
 from option_desk.events.search import search_web
-from option_desk.i18n import localize_hard_reason, normalize_lang, t
+from option_desk.i18n import localize_hard_reason, market_label, normalize_lang, t
 from option_desk.schemas import DeskMode, DeskRun, TickerSnapshot
 from option_desk.rewrite import decision_changes
 from option_desk.stream import StreamEvent, stream_event
@@ -102,18 +102,12 @@ def iter_desk(
                 warnings.append(t(lang, "pipe_regime_none"))
                 yield stream_event("regime_done", message=t(lang, "pipe_regime_none"))
             else:
-                label_key = {
-                    "risk_on": "regime_label_on",
-                    "neutral": "regime_label_neutral",
-                    "caution": "regime_label_caution",
-                    "risk_off": "regime_label_off",
-                }.get(market.label.value, "regime_label_neutral")
                 yield stream_event(
                     "regime_done",
                     message=t(
                         lang,
                         "pipe_regime_done",
-                        label=t(lang, label_key),
+                        label=market_label(market.label, lang),
                         why=market.why,
                     ),
                     market=_dump(market),

@@ -8,7 +8,13 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from option_desk.agents.structured import ModelCall, StructuredOutputError, invoke_structured_traced
 from option_desk.chain.quality import breach_exceeds_delta
 from option_desk.config import Settings
-from option_desk.i18n import language_instruction, localize_hard_reason, normalize_lang
+from option_desk.i18n import (
+    iv_regime_label,
+    language_instruction,
+    localize_hard_reason,
+    market_label,
+    normalize_lang,
+)
 from option_desk.payoff import attach_payoffs
 from option_desk.schemas import (
     DeltaBucket,
@@ -243,16 +249,16 @@ def _quality_why(snapshot: TickerSnapshot, market: MarketRegime | None, lang: st
         bits.append(
             _L(
                 lang,
-                f"IV regime {ctx.regime.value} (IV {_pct(ctx.atm_iv)} vs HV20 {_pct(ctx.hv_20)}).",
-                f"IV 水平 {ctx.regime.value}（IV {_pct(ctx.atm_iv)} vs HV20 {_pct(ctx.hv_20)}）。",
+                f"IV regime {iv_regime_label(ctx.regime, lang)} (IV {_pct(ctx.atm_iv)} vs HV20 {_pct(ctx.hv_20)}).",
+                f"IV 水平：{iv_regime_label(ctx.regime, lang)}（IV {_pct(ctx.atm_iv)} vs HV20 {_pct(ctx.hv_20)}）。",
             )
         )
     if market is not None:
         bits.append(
             _L(
                 lang,
-                f"Market regime {market.label.value}.",
-                f"市场环境 {market.label.value}。",
+                f"Market regime {market_label(market.label, lang)}.",
+                f"市场环境：{market_label(market.label, lang)}。",
             )
         )
     if _trend_reduce(snapshot):

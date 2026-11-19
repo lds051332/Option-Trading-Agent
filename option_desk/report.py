@@ -6,7 +6,14 @@ from pathlib import Path
 from rich.console import Console
 from rich.table import Table
 
-from option_desk.i18n import localize_hard_reason, normalize_lang, t
+from option_desk.i18n import (
+    iv_regime_label,
+    localize_hard_reason,
+    market_label,
+    normalize_lang,
+    t,
+    trend_label,
+)
 from option_desk.schemas import DeltaBucket, DeskRun, TickerSnapshot
 
 
@@ -22,7 +29,7 @@ def _iv_lines(snapshot: TickerSnapshot, lang: str) -> list[str]:
         return []
     lines = [
         f"- {t(lang, 'md_iv')}: ATM {_pct(ctx.atm_iv)} · HV20 {_pct(ctx.hv_20)} · "
-        f"HV60 {_pct(ctx.hv_60)} · HV120 {_pct(ctx.hv_120)} · {ctx.regime.value}"
+        f"HV60 {_pct(ctx.hv_60)} · HV120 {_pct(ctx.hv_120)} · {iv_regime_label(ctx.regime, lang)}"
     ]
     if ctx.expected_move_pct is not None:
         dollars = f"${ctx.expected_move:.2f}" if ctx.expected_move is not None else "—"
@@ -40,7 +47,7 @@ def trend_summary(snapshot: TickerSnapshot, lang: str) -> str:
     ctx = snapshot.trend_context
     if ctx is None:
         return ""
-    bits = [ctx.label.value]
+    bits = [trend_label(ctx.label, lang)]
     if ctx.sma_20 is not None:
         bits.append(f"SMA20 {ctx.sma_20:.2f}")
     if ctx.sma_50 is not None:
@@ -139,7 +146,7 @@ def render_markdown(run: DeskRun) -> str:
     ]
     if run.market:
         lines.append(f"## {t(lang, 'md_market')}")
-        lines.append(f"- **{run.market.label.value}**")
+        lines.append(f"- **{market_label(run.market.label, lang)}**")
         if run.market.why:
             lines.append(f"- {run.market.why}")
         lines.append("")
@@ -219,7 +226,7 @@ def print_run(run: DeskRun, console: Console | None = None) -> None:
     console.print(f"[dim]{t(lang, 'data_note')}[/dim]")
     if run.market:
         console.print(
-            f"[bold]{t(lang, 'market')}[/bold] {run.market.label.value}"
+            f"[bold]{t(lang, 'market')}[/bold] {market_label(run.market.label, lang)}"
             + (f" · {run.market.why}" if run.market.why else "")
         )
     for warning in run.warnings:
@@ -280,7 +287,7 @@ def print_run(run: DeskRun, console: Console | None = None) -> None:
         if ctx is not None:
             console.print(
                 f"[dim]{t(lang, 'iv_vs_hv')} ATM {_pct(ctx.atm_iv)} HV20 {_pct(ctx.hv_20)} "
-                f"{ctx.regime.value}"
+                f"{iv_regime_label(ctx.regime, lang)}"
                 + (
                     f" · {t(lang, 'expected_move')} ±{ctx.expected_move_pct:.1%}"
                     if ctx.expected_move_pct is not None

@@ -295,7 +295,8 @@ def test_heuristic_prefers_conservative_when_risk_off():
     out = heuristic_desk([snap], events=[], cash=55000, lang="zh", market=market)
     assert out.decisions[0].action == DeskAction.OPEN
     assert out.decisions[0].delta_bucket == DeltaBucket.CONSERVATIVE
-    assert "risk_off" in out.decisions[0].why
+    assert "市场环境：Risk-Off" in out.decisions[0].why
+    assert "risk_off" not in out.decisions[0].why
 
 
 def test_heuristic_prefers_conservative_when_standard_inside_em():
@@ -320,7 +321,7 @@ def test_heuristic_prefers_conservative_when_iv_low():
     )
     out = heuristic_desk([snap], events=[], cash=55000, lang="zh")
     assert out.decisions[0].delta_bucket == DeltaBucket.CONSERVATIVE
-    assert "IV 水平 low" in out.decisions[0].why
+    assert "IV 水平：便宜" in out.decisions[0].why
 
 
 def _outside_em_snap(*, breach: float | None = None) -> TickerSnapshot:

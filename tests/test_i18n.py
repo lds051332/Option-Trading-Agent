@@ -3,14 +3,28 @@ from datetime import date, datetime, timezone
 from option_desk.agents.desk import heuristic_desk
 from option_desk.i18n import (
     UI,
+    iv_regime_label,
     lang_from_headers,
     language_instruction,
     localize_hard_reason,
+    market_label,
     normalize_lang,
     t,
+    trend_label,
 )
 from option_desk.report import render_markdown
-from option_desk.schemas import DeskAction, DeskOutput, DeskRun, TickerDecision
+from option_desk.schemas import (
+    DeskAction,
+    DeskOutput,
+    DeskRun,
+    IvContext,
+    IvRegime,
+    MarketLabel,
+    MarketRegime,
+    TickerDecision,
+    TrendContext,
+    TrendLabel,
+)
 from tests.test_desk import _snap
 
 
@@ -78,3 +92,36 @@ def test_markdown_zh_headers():
     assert "## 决策" in md
     assert "测试理由" in md
     assert "不构成投资建议" in md
+
+
+def test_labels_localized():
+    assert iv_regime_label(IvRegime.HIGH, "zh") == "偏贵"
+    assert iv_regime_label(IvRegime.HIGH, "en") == "high"
+    assert trend_label(TrendLabel.DOWN, "zh") == "下降"
+    assert trend_label("flat", "en") == "flat"
+    assert market_label(MarketLabel.RISK_OFF, "zh") == "Risk-Off"
+    assert market_label(MarketLabel.CAUTION, "zh") == "谨慎"
+
+
+def test_markdown_zh_labels_not_raw():
+    snap = _snap("NVDA").model_copy(
+        update={
+            "iv_context": IvContext(atm_iv=0.6, hv_20=0.45, iv_hv_ratio=1.33, regime=IvRegime.HIGH),
+            "trend_context": TrendContext(label=TrendLabel.DOWN, sma_20=170, sma_50=185),
+        }
+    )
+    run = DeskRun(
+        as_of=date(2026, 9, 2),
+        fetched_at=datetime(2026, 9, 2, tzinfo=timezone.utc),
+        cash=55000,
+        snapshots=[snap],
+        events=[],
+        desk=DeskOutput(decisions=[TickerDecision(ticker="NVDA", action=DeskAction.SKIP, why="x")]),
+        language="zh",
+        market=MarketRegime(label=MarketLabel.CAUTION),
+    )
+    md = render_markdown(run)
+    assert "**谨慎**" in md
+    assert "· 偏贵" in md
+    assert "趋势: 下降" in md
+    assert "down" not in md and "caution" not in md

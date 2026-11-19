@@ -6,7 +6,7 @@ export type InfoDoc = { title: string; lead: string; updated?: string; sections:
 export type InfoPageId = "about" | "privacy";
 
 const EMAIL = "605465435@qq.com";
-const REPO = "https://github.com/lds051332/OptionTradingAgent";
+const REPO = "https://github.com/lds051332/Option-Trading-Agent";
 
 const about: Record<Lang, InfoDoc> = {
   zh: {
@@ -45,7 +45,7 @@ const about: Record<Lang, InfoDoc> = {
         heading: "关于作者",
         body: [
           "这个工具由大山一个人开发和维护，服务器和大模型的费用都是自掏腰包，网站免费使用。",
-          `代码在 GitHub 上开源：[lds051332/OptionTradingAgent](${REPO})。`,
+          `代码在 GitHub 上开源：[lds051332/Option-Trading-Agent](${REPO})。`,
         ],
       },
       {
@@ -92,7 +92,7 @@ const about: Record<Lang, InfoDoc> = {
         heading: "Who built it",
         body: [
           "The desk is built and run by one person, 大山 (Dashan). Server and model costs come out of pocket, and the site is free to use.",
-          `The code is open source on GitHub: [lds051332/OptionTradingAgent](${REPO}).`,
+          `The code is open source on GitHub: [lds051332/Option-Trading-Agent](${REPO}).`,
         ],
       },
       {

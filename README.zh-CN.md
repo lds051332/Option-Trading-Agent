@@ -50,7 +50,7 @@ Web 上改 Delta 锚时，保守档按 `0.11 / 0.20` 比例缩放。
 ## 安装
 
 ```bash
-git clone https://github.com/lds051332/OptionTradingAgent.git
+git clone https://github.com/lds051332/Option-Trading-Agent.git OptionTradingAgent
 cd OptionTradingAgent
 python -m venv .venv
 ```
@@ -146,7 +146,7 @@ cd web && npm install && npm run dev
 ## Web（云 Linux）
 
 ```bash
-git clone https://github.com/lds051332/OptionTradingAgent.git
+git clone https://github.com/lds051332/Option-Trading-Agent.git OptionTradingAgent
 cd OptionTradingAgent
 cp .env.example .env
 # 编辑 .env：DEEPSEEK_API_KEY

@@ -56,7 +56,7 @@ def test_reduce_keeps_a_legal_open_on_the_conservative_contract():
     assert stamped.delta_bucket == DeltaBucket.CONSERVATIVE
     assert stamped.contract_id == "NVDA-2026-09-11-P-155"
     assert stamped.payoff is not None
-    assert "risk_off" in stamped.why
+    assert "risk-off" in stamped.why
 
 
 def test_iter_replay_finishes_without_live_calls():
