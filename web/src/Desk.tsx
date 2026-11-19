@@ -657,7 +657,7 @@ function BucketRow({ bucket, call }: { bucket: BucketCandidate; call: boolean })
       <td className="py-2">
         {bucket.score ? t("desk.scoreHint", { total: bucket.score.total }) : "—"}
         {bucket.score?.inside_expected_move ? (
-          <div className="text-[10px] text-[var(--skip)]">{t("desk.emInside")}</div>
+          <div className="text-[10px] text-[var(--skip)]">{t("desk.emInsideBand")}</div>
         ) : null}
         {breach != null ? (
           <div

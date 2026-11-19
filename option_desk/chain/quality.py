@@ -34,6 +34,8 @@ _SCORE_WEIGHTS = {
 }
 
 RANGE_WINDOW = 20
+# Spot within this fraction of the 20-day edge makes "beyond the range" uninformative.
+RANGE_EDGE_PCT = 0.01
 MIN_BREACH_SAMPLES = 40
 # Breach base rate this many times the strike's delta counts as a reduce signal.
 BREACH_REDUCE_RATIO = 1.5
@@ -291,16 +293,24 @@ def _history_score(rate: float | None, delta: float) -> int | None:
 
 def _beyond_recent_range(
     strike: float,
+    spot: float,
     closes: Sequence[float],
     mode: DeskMode,
 ) -> bool | None:
+    """None when spot already sits at (or past) the range edge: every OTM strike would be beyond it."""
     series = [c for c in closes if c > 0]
-    if len(series) < RANGE_WINDOW:
+    if len(series) < RANGE_WINDOW or spot <= 0:
         return None
     recent = series[-RANGE_WINDOW:]
     if mode is DeskMode.CALL:
-        return strike > max(recent)
-    return strike < min(recent)
+        edge = max(recent)
+        if (edge - spot) / spot < RANGE_EDGE_PCT:
+            return None
+        return strike > edge
+    edge = min(recent)
+    if (spot - edge) / spot < RANGE_EDGE_PCT:
+        return None
+    return strike < edge
 
 
 def score_contract(
@@ -356,5 +366,5 @@ def score_contract(
         hist_breach_rate=round(breach, 4) if breach is not None else None,
         hist_breach_samples=samples,
         hist_horizon_days=horizon if closes else None,
-        beyond_recent_range=_beyond_recent_range(quote.strike, closes, mode) if closes else None,
+        beyond_recent_range=_beyond_recent_range(quote.strike, spot, closes, mode) if closes else None,
     )

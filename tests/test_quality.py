@@ -198,8 +198,26 @@ def test_score_uses_price_history_when_closes_given():
     assert calm_score.hist_breach_rate == 0.0
     assert calm_score.history == 100
     assert calm_score.hist_horizon_days == 5
-    assert calm_score.beyond_recent_range is True
+    # Spot 180 is already below the 20-day closing low (~185), so the range flag says nothing.
+    assert calm_score.beyond_recent_range is None
     assert calm_score.total >= without.total
+
+
+def _range_score(strike: float, spot: float, mode: DeskMode = DeskMode.PUT):
+    closes = [180.0] * 100 + [170.0 + i for i in range(21)]  # last 20 closes: 171..190
+    return score_contract(
+        _quote(strike=strike), spot=spot, target_delta=0.20, band=0.06, mode=mode,
+        iv_hv_ratio=1.0, closes=closes,
+    )
+
+
+def test_recent_range_flag_and_edge():
+    assert _range_score(165, 185).beyond_recent_range is True
+    assert _range_score(175, 185).beyond_recent_range is False
+    # Spot within 1% of the 20-day low: every OTM put would be "beyond", so omit.
+    assert _range_score(165, 172).beyond_recent_range is None
+    assert _range_score(195, 180, DeskMode.CALL).beyond_recent_range is True
+    assert _range_score(195, 189.5, DeskMode.CALL).beyond_recent_range is None
 
 
 def test_build_market_regime_localizes_why():

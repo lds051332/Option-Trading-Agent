@@ -51,7 +51,7 @@ Hard rules:
 - market.regime is VIX + SPY/QQQ trend. CAUTION/RISK_OFF: prefer conservative. Never hard-SKIP solely on market regime.
 - trend is this ticker's own spot vs its 20/50-day averages. DOWN (spot below both, 20 below 50): prefer conservative or a spread; say so. Never hard-SKIP solely on trend.
 - hist_breach is the share of past windows of the same length (last ~8 months of closes) in which the stock fell past this strike. Delta is the market's implied odds of finishing ITM. If hist_breach is at least 1.5x delta, this stock has moved more than the option price implies: prefer conservative and mention it. It is a backward-looking base rate, not a forecast.
-- beyond_20d_range means the put strike sits below the lowest close of the last 20 sessions. Inside the range is common for standard; mention it only as context.
+- beyond_20d_range means the put strike sits below the lowest close of the last 20 sessions. Inside the range is common for standard; mention it only as context. It is omitted when spot itself is at that low.
 """
 
 CALL_SYSTEM = """You are the portfolio manager of a narrow US equity covered-call desk.
@@ -80,7 +80,7 @@ Hard rules:
 - market.regime is VIX + SPY/QQQ trend. CAUTION/RISK_OFF: prefer conservative. Never hard-SKIP solely on market regime.
 - trend is this ticker's own spot vs its 20/50-day averages. UP (spot above both, 20 above 50): the shares may run through a near strike; prefer conservative (higher strike) and say so. Never hard-SKIP solely on trend.
 - hist_breach is the share of past windows of the same length (last ~8 months of closes) in which the stock rose past this strike. Delta is the market's implied odds of finishing ITM. If hist_breach is at least 1.5x delta, assignment is likelier than the option price implies: prefer conservative and mention it. It is a backward-looking base rate, not a forecast.
-- beyond_20d_range means the call strike sits above the highest close of the last 20 sessions. Inside the range is common for standard; mention it only as context.
+- beyond_20d_range means the call strike sits above the highest close of the last 20 sessions. Inside the range is common for standard; mention it only as context. It is omitted when spot itself is at that high.
 """
 
 
