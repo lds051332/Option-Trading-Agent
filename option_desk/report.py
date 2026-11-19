@@ -30,14 +30,53 @@ def _iv_lines(snapshot: TickerSnapshot, lang: str) -> list[str]:
         lines.append(
             f"- {t(lang, 'md_em')}: ±{ctx.expected_move_pct:.1%} ({dollars}, {dte} DTE)"
         )
+    trend = trend_summary(snapshot, lang)
+    if trend:
+        lines.append(f"- {t(lang, 'md_trend')}: {trend}")
     return lines
+
+
+def trend_summary(snapshot: TickerSnapshot, lang: str) -> str:
+    ctx = snapshot.trend_context
+    if ctx is None:
+        return ""
+    bits = [ctx.label.value]
+    if ctx.sma_20 is not None:
+        bits.append(f"SMA20 {ctx.sma_20:.2f}")
+    if ctx.sma_50 is not None:
+        bits.append(f"SMA50 {ctx.sma_50:.2f}")
+    if ctx.return_5d is not None:
+        bits.append(f"{t(lang, 'md_ret5d')} {ctx.return_5d:+.1%}")
+    if ctx.low_20 is not None and ctx.high_20 is not None:
+        bits.append(f"{t(lang, 'md_range20')} {ctx.low_20:.2f}–{ctx.high_20:.2f}")
+    return " · ".join(bits)
+
+
+def history_summary(cand, lang: str) -> str:
+    score = cand.score
+    if not score:
+        return ""
+    bits: list[str] = []
+    if score.hist_breach_rate is not None:
+        bits.append(
+            t(lang, "md_breach").format(
+                rate=f"{score.hist_breach_rate:.0%}",
+                n=score.hist_breach_samples,
+                h=score.hist_horizon_days or "?",
+            )
+        )
+    if score.beyond_recent_range:
+        bits.append(t(lang, "md_beyond_range"))
+    return " · ".join(bits)
 
 
 def _score_bit(cand, lang: str) -> str:
     if not cand.score:
         return ""
     where = t(lang, "md_inside_em") if cand.score.inside_expected_move else t(lang, "md_outside_em")
-    return f" {t(lang, 'md_score')} {cand.score.total} {where}"
+    history = history_summary(cand, lang)
+    history_bit = f" · {history}" if history else ""
+    return f" {t(lang, 'md_score')} {cand.score.total} {where}{history_bit}"
 
 
 def _spread_text(cand, lang: str) -> str:
@@ -249,6 +288,9 @@ def print_run(run: DeskRun, console: Console | None = None) -> None:
                 )
                 + "[/dim]"
             )
+        trend = trend_summary(snap, lang)
+        if trend:
+            console.print(f"[dim]{t(lang, 'md_trend')} {trend}[/dim]")
         if snap.calendar.hard_skip:
             reasons = "; ".join(localize_hard_reason(r, lang) for r in snap.calendar.hard_reasons)
             console.print(f"[red]{t(lang, 'hard_skip')}[/red] {reasons}")

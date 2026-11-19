@@ -1346,6 +1346,14 @@ a:focus-visible {
   color: var(--chalk);
 }
 
+.quality-stat dd.is-warn {
+  color: var(--skip);
+}
+
+.trend-block {
+  margin-top: 0.85rem;
+}
+
 .quality-em {
   margin: 0.55rem 0 0;
   font-size: 12px;

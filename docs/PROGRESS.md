@@ -4,6 +4,75 @@
 
 ---
 
+## 2026-11-19 · v0.5b 决策质量：趋势与历史击穿率
+
+### 背景
+
+v0.5a 回答了「这约贵不贵、离预期波动多远、大盘什么状态」。还缺两件事：**这只股票自己在往哪走**，以及**它过去真实的波动，比期权价格隐含的大还是小**。Delta 是风险中性下的到期 ITM 概率；如果这只票过去同样长度的持有期里越过同等距离的频率明显更高，说明期权卖便宜了。
+
+刻意不做：
+
+- 不新增网络请求：复用 IV/HV 已经拉的 8 个月日收盘
+- 不落库，不做回测框架
+- 趋势和击穿率都只是 **reduce**（偏向保守档），单独不会 SKIP；Enforcer 不因此改写
+- 不改选档主规则
+
+### 公式与规则
+
+**个股趋势（每个标的一次）**
+
+| 条件 | 标签 |
+| --- | --- |
+| spot > SMA20 > SMA50 | `up` |
+| spot < SMA20 < SMA50 | `down` |
+| 其余 | `flat` |
+| 收盘不足 50 日 | `unknown` |
+
+另带近 5 日涨跌和 20 日收盘区间（最低/最高收盘，不是盘中高低）。卖 Put 遇 `down`、卖 Call 遇 `up` → reduce。
+
+**历史击穿率（每个档位）**
+
+```text
+horizon = round(DTE × 5/7) 个交易日
+cushion = |strike − spot| / spot
+breach_rate = 过去所有长度为 horizon 的重叠窗口里，收盘到收盘跌幅 ≥ cushion（Put）或涨幅 ≥ cushion（Call）的占比
+```
+
+样本少于 40 个窗口则为空。标准档 `breach_rate ≥ 1.5 × delta` → reduce。
+
+**评分**新增 `history` 片，权重 10：`breach/delta` 为 0 → 100、1 → 50、2 → 0。没有收盘数据时这一片为空并按剩余权重归一，所以旧快照的总分不变。
+
+**20 日区间**：Put 行权价低于 20 日最低收盘、Call 行权价高于 20 日最高收盘 → `beyond_recent_range`。只做展示和提示词上下文，不参与 reduce（标准档在区间内很常见）。
+
+### 接到哪
+
+- `TickerSnapshot.trend_context`；`ContractScore.history / hist_breach_rate / hist_breach_samples / hist_horizon_days / beyond_recent_range`
+- LLM 系统提示（Put / Call 各自的方向）和 snapshot 正文带上 trend、hist_breach、beyond_20d_range
+- 启发式 `_quality_reduce` 加趋势和击穿率；理由里写明是哪条信号
+- Web：质量面板加「个股趋势」网格；档位表评分列下加历史击穿率（≥1.5×Δ 标红）和「在 20 日区间外」
+- CLI / markdown 报告 / Finch 回复同步
+- 中英：`option_desk/i18n.py` 与 `web/src/i18n.ts`
+
+### 文件
+
+| 路径 | 作用 |
+| --- | --- |
+| `option_desk/chain/quality.py` | 趋势、击穿率、history 评分片 |
+| `option_desk/chain/screener.py` | 一次拉收盘，IV/趋势/评分共用 |
+| `option_desk/agents/desk.py` | 提示词 + 启发式 reduce + 理由 |
+| `option_desk/report.py` | `trend_summary` / `history_summary`，Finch 共用 |
+| `web/src/QualityPanel.tsx` | 趋势网格 |
+| `web/src/Desk.tsx` | 档位表击穿率 |
+| `tests/test_quality.py`、`tests/test_desk.py` | 公式、阈值、reduce 方向、提示词 |
+
+### 已知边界
+
+- 击穿率只看到期收盘，不看盘中触及；重叠窗口之间不独立，样本数不等于独立观测数
+- 8 个月窗口里若含一次财报跳空，会抬高击穿率——这正是想提醒的，但持有期内的财报本来就硬 SKIP
+- `--as-of` 不回放历史收盘，仍用当前快照
+
+---
+
 ## 2026-09-13 · 可选持仓管理 V1
 
 ### 背景

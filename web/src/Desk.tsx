@@ -640,6 +640,8 @@ function BucketRow({ bucket, call }: { bucket: BucketCandidate; call: boolean })
       : bucket.csp.iv_source === "floored"
         ? t("desk.ivFloored")
         : null;
+  const breach = bucket.score?.hist_breach_rate ?? null;
+  const breachHigh = breach != null && bucket.csp.delta > 0 && breach >= bucket.csp.delta * 1.5;
   return (
     <tr className="border-t border-[var(--hairline)]">
       <td className="py-2">{bucket.bucket}</td>
@@ -656,6 +658,20 @@ function BucketRow({ bucket, call }: { bucket: BucketCandidate; call: boolean })
         {bucket.score ? t("desk.scoreHint", { total: bucket.score.total }) : "—"}
         {bucket.score?.inside_expected_move ? (
           <div className="text-[10px] text-[var(--skip)]">{t("desk.emInside")}</div>
+        ) : null}
+        {breach != null ? (
+          <div
+            className={`text-[10px] ${breachHigh ? "text-[var(--skip)]" : "text-[var(--mute)]"}`}
+            title={t("desk.histBreachTitle", {
+              n: bucket.score?.hist_breach_samples ?? 0,
+              h: bucket.score?.hist_horizon_days ?? "?",
+            })}
+          >
+            {t("desk.histBreach", { rate: `${Math.round(breach * 100)}%` })}
+          </div>
+        ) : null}
+        {bucket.score?.beyond_recent_range ? (
+          <div className="text-[10px] text-[var(--mute)]">{t("desk.beyondRange")}</div>
         ) : null}
       </td>
       <td className="py-2">

@@ -3,6 +3,7 @@ from __future__ import annotations
 from option_desk.finch.parse import DeskRequest
 from option_desk.finch.text import ft
 from option_desk.i18n import localize_hard_reason, normalize_lang, t
+from option_desk.report import history_summary, trend_summary
 from option_desk.schemas import (
     BucketCandidate,
     DeltaBucket,
@@ -130,6 +131,9 @@ def _bucket_line(bucket: DeltaBucket, cand: BucketCandidate | None, snap: Ticker
     if cand.score:
         where = t(lang, "md_inside_em" if cand.score.inside_expected_move else "md_outside_em")
         parts.append(f"{t(lang, 'md_score')} {cand.score.total} ({where})")
+        history = history_summary(cand, lang)
+        if history:
+            parts.append(history)
     last = ft(lang, "last_print") if quote.quote_source.value == "last" else ""
     return f"- {bucket.value} `{quote.contract_id}` · {' · '.join(parts)}{last}"
 
@@ -145,6 +149,9 @@ def _snapshot_lines(snap: TickerSnapshot, lang: str) -> list[str]:
             dollars = f"${ctx.expected_move:.2f}" if ctx.expected_move is not None else "—"
             iv = f"{iv}; {t(lang, 'md_em')} ±{ctx.expected_move_pct:.1%} ({dollars}, {ctx.expected_move_dte or '?'} DTE)"
         lines.append(f"- {_kv(lang, t(lang, 'md_iv'), iv)}")
+    trend = trend_summary(snap, lang)
+    if trend:
+        lines.append(f"- {_kv(lang, t(lang, 'md_trend'), trend)}")
     cal = snap.calendar
     calendar = ft(lang, "calendar", start=cal.holding_start.isoformat(), end=cal.holding_end.isoformat())
     if cal.hard_skip:

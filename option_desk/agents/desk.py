@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from langchain_core.messages import HumanMessage, SystemMessage
 
 from option_desk.agents.structured import ModelCall, StructuredOutputError, invoke_structured_traced
+from option_desk.chain.quality import breach_exceeds_delta
 from option_desk.config import Settings
 from option_desk.i18n import language_instruction, localize_hard_reason, normalize_lang
 from option_desk.payoff import attach_payoffs
@@ -23,6 +24,7 @@ from option_desk.schemas import (
     Structure,
     TickerDecision,
     TickerSnapshot,
+    TrendLabel,
 )
 
 SYSTEM = """You are the portfolio manager of a narrow US equity put-selling desk.
@@ -47,6 +49,9 @@ Hard rules:
 - expected_move is 1-sigma: spot * IV * sqrt(DTE/365). If inside_expected_move is true, the short strike still sits inside that band — say so. Prefer conservative when standard is inside EM and conservative is outside.
 - contract score is a 0-100 ranking aid among the provided buckets. Never invent a strike to chase a higher score.
 - market.regime is VIX + SPY/QQQ trend. CAUTION/RISK_OFF: prefer conservative. Never hard-SKIP solely on market regime.
+- trend is this ticker's own spot vs its 20/50-day averages. DOWN (spot below both, 20 below 50): prefer conservative or a spread; say so. Never hard-SKIP solely on trend.
+- hist_breach is the share of past windows of the same length (last ~8 months of closes) in which the stock fell past this strike. Delta is the market's implied odds of finishing ITM. If hist_breach is at least 1.5x delta, this stock has moved more than the option price implies: prefer conservative and mention it. It is a backward-looking base rate, not a forecast.
+- beyond_20d_range means the put strike sits below the lowest close of the last 20 sessions. Inside the range is common for standard; mention it only as context.
 """
 
 CALL_SYSTEM = """You are the portfolio manager of a narrow US equity covered-call desk.
@@ -73,6 +78,9 @@ Hard rules:
 - expected_move is 1-sigma: spot * IV * sqrt(DTE/365). If inside_expected_move is true, the short strike still sits inside that band — say so. Prefer conservative when standard is inside EM and conservative is outside.
 - contract score is a 0-100 ranking aid among the provided buckets. Never invent a strike to chase a higher score.
 - market.regime is VIX + SPY/QQQ trend. CAUTION/RISK_OFF: prefer conservative. Never hard-SKIP solely on market regime.
+- trend is this ticker's own spot vs its 20/50-day averages. UP (spot above both, 20 above 50): the shares may run through a near strike; prefer conservative (higher strike) and say so. Never hard-SKIP solely on trend.
+- hist_breach is the share of past windows of the same length (last ~8 months of closes) in which the stock rose past this strike. Delta is the market's implied odds of finishing ITM. If hist_breach is at least 1.5x delta, assignment is likelier than the option price implies: prefer conservative and mention it. It is a backward-looking base rate, not a forecast.
+- beyond_20d_range means the call strike sits above the highest close of the last 20 sessions. Inside the range is common for standard; mention it only as context.
 """
 
 
@@ -100,6 +108,13 @@ def _bucket_brief(snapshot: TickerSnapshot) -> str:
                 f" score={cand.score.total} dist={cand.score.strike_distance_pct:.1%} "
                 f"yield={cand.score.premium_yield:.2%} em={cand.score.expected_move_pct:.1%} {where}"
             )
+            if cand.score.hist_breach_rate is not None:
+                score_bit += (
+                    f" hist_breach={cand.score.hist_breach_rate:.0%}"
+                    f"(n={cand.score.hist_breach_samples},{cand.score.hist_horizon_days}d)"
+                )
+            if cand.score.beyond_recent_range is not None:
+                score_bit += f" beyond_20d_range={cand.score.beyond_recent_range}"
         lines.append(
             f"  {bucket.value}: id={cand.csp.contract_id} strike={cand.csp.strike:g} "
             f"delta={cand.csp.delta:.3f} dte={cand.csp.dte} mid={cand.csp.mid:.2f} "
@@ -161,6 +176,36 @@ def _em_brief(snapshot: TickerSnapshot) -> str:
     return f"expected_move=±{ctx.expected_move_pct:.1%} ({dollars}) over {dte} DTE"
 
 
+def _trend_brief(snapshot: TickerSnapshot) -> str:
+    ctx = snapshot.trend_context
+    if ctx is None:
+        return "trend=n/a"
+    sma20 = f"{ctx.sma_20:.2f}" if ctx.sma_20 is not None else "n/a"
+    sma50 = f"{ctx.sma_50:.2f}" if ctx.sma_50 is not None else "n/a"
+    ret = f"{ctx.return_5d:+.1%}" if ctx.return_5d is not None else "n/a"
+    rng = (
+        f"{ctx.low_20:.2f}-{ctx.high_20:.2f}"
+        if ctx.low_20 is not None and ctx.high_20 is not None
+        else "n/a"
+    )
+    return f"trend={ctx.label.value} sma20={sma20} sma50={sma50} ret5d={ret} range20d={rng}"
+
+
+def _trend_reduce(snapshot: TickerSnapshot) -> bool:
+    ctx = snapshot.trend_context
+    if ctx is None:
+        return False
+    against = TrendLabel.UP if snapshot.mode is DeskMode.CALL else TrendLabel.DOWN
+    return ctx.label is against
+
+
+def _breach_reduce(snapshot: TickerSnapshot) -> bool:
+    std = snapshot.buckets.get(DeltaBucket.STANDARD)
+    if not std or not std.score:
+        return False
+    return breach_exceeds_delta(std.score.hist_breach_rate, std.csp.delta)
+
+
 def _market_brief(market: MarketRegime | None) -> str:
     if market is None:
         return "MARKET REGIME: unavailable"
@@ -188,7 +233,7 @@ def _quality_reduce(snapshot: TickerSnapshot, market: MarketRegime | None) -> bo
     if std and cons and std.score and cons.score:
         if std.score.inside_expected_move and not cons.score.inside_expected_move:
             return True
-    return False
+    return _trend_reduce(snapshot) or _breach_reduce(snapshot)
 
 
 def _quality_why(snapshot: TickerSnapshot, market: MarketRegime | None, lang: str) -> str:
@@ -208,6 +253,30 @@ def _quality_why(snapshot: TickerSnapshot, market: MarketRegime | None, lang: st
                 lang,
                 f"Market regime {market.label.value}.",
                 f"市场环境 {market.label.value}。",
+            )
+        )
+    if _trend_reduce(snapshot):
+        bits.append(
+            _L(
+                lang,
+                "The stock is in an uptrend (above its 20/50-day averages), so a near call strike is likelier to be run through."
+                if snapshot.mode is DeskMode.CALL
+                else "The stock is in a downtrend (below its 20/50-day averages).",
+                "股价处于上升趋势（站上 20/50 日均线），近行权价的 Call 更容易被涨穿。"
+                if snapshot.mode is DeskMode.CALL
+                else "股价处于下降趋势（跌破 20/50 日均线）。",
+            )
+        )
+    if _breach_reduce(snapshot):
+        std = snapshot.buckets[DeltaBucket.STANDARD]
+        rate = _pct(std.score.hist_breach_rate)
+        delta = f"{std.csp.delta:.2f}"
+        bits.append(
+            _L(
+                lang,
+                f"Over the past ~8 months, {rate} of same-length windows moved past the standard strike, "
+                f"well above its delta {delta}.",
+                f"过去约 8 个月里，同样长度的持有期有 {rate} 越过了标准档行权价，明显高于 Delta {delta}。",
             )
         )
     return " ".join(bits)
@@ -284,6 +353,7 @@ def snapshot_prompt(
             f"  soft_macro={soft}\n"
             f"  {_iv_brief(snap)}\n"
             f"  {_em_brief(snap)}\n"
+            f"  {_trend_brief(snap)}\n"
             f"  premium_tradeoff={_premium_tradeoff(snap)}\n"
             f"  notes={'; '.join(snap.notes) if snap.notes else 'none'}\n"
             f"  delta buckets:\n{_bucket_brief(snap)}\n"
@@ -423,8 +493,8 @@ def heuristic_call_desk(
             why = _L(
                 lang,
                 "Moved to the conservative (further OTM) bucket because of a macro event, "
-                "risk-reducing news, IV or market signals, or a standard strike below cost basis.",
-                "因为有宏观事件、需降风险的新闻、IV 或市场环境信号，或标准档行权价低于成本价，改用更虚值的保守档。",
+                "risk-reducing news, IV, market, trend, or price-history signals, or a standard strike below cost basis.",
+                "因为有宏观事件、需降风险的新闻、IV、市场环境、趋势或历史走势信号，或标准档行权价低于成本价，改用更虚值的保守档。",
             )
         extra = _quality_why(snap, market, lang)
         if extra:
@@ -557,8 +627,8 @@ def heuristic_desk(
             why = _L(
                 lang,
                 "Moved to the conservative bucket (or a spread) because of a macro event, "
-                "risk-reducing news, or IV or market signals.",
-                "因为有宏观事件、需降风险的新闻，或 IV、市场环境信号，改用保守档（或价差）。",
+                "risk-reducing news, or IV, market, trend, or price-history signals.",
+                "因为有宏观事件、需降风险的新闻，或 IV、市场环境、趋势、历史走势信号，改用保守档（或价差）。",
             )
         extra = _quality_why(snap, market, lang)
         if extra:

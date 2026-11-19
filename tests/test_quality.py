@@ -1,13 +1,18 @@
 from datetime import date
 
 from option_desk.chain.quality import (
+    breach_exceeds_delta,
     build_iv_context,
+    build_trend_context,
     classify_iv_regime,
     classify_market_regime,
+    classify_trend,
     expected_move_pct,
+    historical_breach_rate,
     realized_vol,
     score_contract,
     sma,
+    trading_days,
 )
 from option_desk.chain.market import build_market_regime
 from option_desk.schemas import (
@@ -16,6 +21,7 @@ from option_desk.schemas import (
     IvRegime,
     MarketLabel,
     QuoteSource,
+    TrendLabel,
 )
 
 
@@ -131,6 +137,69 @@ def test_iv_context_from_quotes_and_closes():
     assert ctx.hv_20 is not None
     assert ctx.expected_move_pct is not None
     assert ctx.expected_move == 180.0 * ctx.expected_move_pct
+
+
+def test_trend_labels():
+    assert classify_trend(110, 105, 100) is TrendLabel.UP
+    assert classify_trend(90, 95, 100) is TrendLabel.DOWN
+    assert classify_trend(100, 95, 105) is TrendLabel.FLAT
+    assert classify_trend(100, 95, None) is TrendLabel.UNKNOWN
+
+
+def test_trend_context_from_falling_closes():
+    closes = _closes(200, 60, step=-1.0)
+    ctx = build_trend_context(closes[-1], closes)
+    assert ctx is not None
+    assert ctx.label is TrendLabel.DOWN
+    assert ctx.low_20 == closes[-1]
+    assert ctx.high_20 == closes[-20]
+    assert ctx.return_5d is not None and ctx.return_5d < 0
+    assert build_trend_context(100, _closes(100, 10)) is None
+
+
+def test_trading_days_from_dte():
+    assert trading_days(7) == 5
+    assert trading_days(1) == 1
+    assert trading_days(0) == 1
+
+
+def test_breach_rate_counts_windows_past_cushion():
+    # Alternating ±3% days: every 1-session window moves 3%, 2-session windows net out.
+    closes = []
+    price = 100.0
+    for i in range(80):
+        price *= 1.03 if i % 2 == 0 else 1 / 1.03
+        closes.append(price)
+    put_rate, n = historical_breach_rate(closes, 0.02, 1, DeskMode.PUT)
+    assert n == 79
+    assert put_rate is not None and 0.45 < put_rate < 0.55
+    call_rate, _ = historical_breach_rate(closes, 0.02, 2, DeskMode.CALL)
+    assert call_rate == 0.0
+    short, n_short = historical_breach_rate(closes[:30], 0.02, 1, DeskMode.PUT)
+    assert short is None and n_short == 29
+
+
+def test_breach_exceeds_delta_threshold():
+    assert breach_exceeds_delta(0.30, 0.20) is True
+    assert breach_exceeds_delta(0.25, 0.20) is False
+    assert breach_exceeds_delta(None, 0.20) is False
+    assert breach_exceeds_delta(0.30, 0.0) is False
+
+
+def test_score_uses_price_history_when_closes_given():
+    quote = _quote(strike=170, delta=0.20)
+    calm = _closes(180, 120, step=0.05)
+    without = score_contract(quote, spot=180, target_delta=0.20, band=0.06, mode=DeskMode.PUT, iv_hv_ratio=1.2)
+    calm_score = score_contract(
+        quote, spot=180, target_delta=0.20, band=0.06, mode=DeskMode.PUT, iv_hv_ratio=1.2, closes=calm
+    )
+    assert without.history is None
+    assert without.hist_breach_rate is None
+    assert calm_score.hist_breach_rate == 0.0
+    assert calm_score.history == 100
+    assert calm_score.hist_horizon_days == 5
+    assert calm_score.beyond_recent_range is True
+    assert calm_score.total >= without.total
 
 
 def test_build_market_regime_localizes_why():

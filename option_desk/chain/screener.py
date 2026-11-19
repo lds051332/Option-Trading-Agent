@@ -9,7 +9,7 @@ import yfinance as yf
 
 from option_desk.chain.greeks import abs_put_delta, call_delta, implied_vol, years_from_dte
 from option_desk.chain.market import fetch_closes
-from option_desk.chain.quality import build_iv_context, score_contract
+from option_desk.chain.quality import build_iv_context, build_trend_context, score_contract
 from option_desk.config import Settings
 from option_desk.i18n import t
 from option_desk.schemas import (
@@ -488,6 +488,7 @@ def _score_buckets(
     settings: Settings,
     mode: DeskMode,
     iv_hv_ratio: float | None,
+    closes: list[float] | None = None,
 ) -> dict[DeltaBucket, BucketCandidate]:
     scored: dict[DeltaBucket, BucketCandidate] = {}
     for bucket, cand in buckets.items():
@@ -503,6 +504,7 @@ def _score_buckets(
             band=band,
             mode=mode,
             iv_hv_ratio=iv_hv_ratio,
+            closes=closes,
         )
         scored[bucket] = cand.model_copy(update={"score": score})
     return scored
@@ -535,10 +537,12 @@ def screen_ticker(ticker: str, as_of: date, settings: Settings) -> TickerSnapsho
     else:
         holding_end = as_of + timedelta(days=settings.max_dte)
 
-    iv_context = build_iv_context(quotes, spot, fetch_closes(ticker)) if quotes else None
+    closes = fetch_closes(ticker) if quotes else []
+    iv_context = build_iv_context(quotes, spot, closes) if quotes else None
+    trend_context = build_trend_context(spot, closes) if closes else None
     if buckets:
         ratio = iv_context.iv_hv_ratio if iv_context else None
-        buckets = _score_buckets(buckets, spot, settings, mode, ratio)
+        buckets = _score_buckets(buckets, spot, settings, mode, ratio, closes)
 
     return TickerSnapshot(
         ticker=ticker,
@@ -557,4 +561,5 @@ def screen_ticker(ticker: str, as_of: date, settings: Settings) -> TickerSnapsho
         shares=settings.shares if mode is DeskMode.CALL else None,
         cost_basis=settings.cost_basis if mode is DeskMode.CALL else None,
         iv_context=iv_context,
+        trend_context=trend_context,
     )

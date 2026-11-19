@@ -1,6 +1,6 @@
 from datetime import date, datetime, timezone
 
-from option_desk.agents.desk import enforce_desk_rules, heuristic_desk, no_candidate_desk
+from option_desk.agents.desk import enforce_desk_rules, heuristic_desk, no_candidate_desk, snapshot_prompt
 from option_desk.events.scout import _normalize
 from option_desk.schemas import (
     BucketCandidate,
@@ -21,6 +21,8 @@ from option_desk.schemas import (
     Structure,
     TickerDecision,
     TickerSnapshot,
+    TrendContext,
+    TrendLabel,
     QuoteSource,
 )
 
@@ -319,4 +321,72 @@ def test_heuristic_prefers_conservative_when_iv_low():
     out = heuristic_desk([snap], events=[], cash=55000, lang="zh")
     assert out.decisions[0].delta_bucket == DeltaBucket.CONSERVATIVE
     assert "IV 水平 low" in out.decisions[0].why
+
+
+def _outside_em_snap(*, breach: float | None = None) -> TickerSnapshot:
+    snap = _two_bucket_snap()
+    std = snap.buckets[DeltaBucket.STANDARD]
+    cons = snap.buckets[DeltaBucket.CONSERVATIVE]
+    std_score = _score(total=60, inside=False).model_copy(
+        update={"hist_breach_rate": breach, "hist_breach_samples": 150, "hist_horizon_days": 5}
+    )
+    return snap.model_copy(
+        update={
+            "buckets": {
+                DeltaBucket.STANDARD: std.model_copy(update={"score": std_score}),
+                DeltaBucket.CONSERVATIVE: cons.model_copy(update={"score": _score(total=70, inside=False)}),
+            },
+        }
+    )
+
+
+def test_heuristic_keeps_standard_without_quality_signals():
+    out = heuristic_desk([_outside_em_snap(breach=0.15)], events=[], cash=55000, lang="en")
+    assert out.decisions[0].delta_bucket == DeltaBucket.STANDARD
+
+
+def test_heuristic_prefers_conservative_in_downtrend():
+    snap = _outside_em_snap().model_copy(
+        update={"trend_context": TrendContext(label=TrendLabel.DOWN, sma_20=175, sma_50=185)}
+    )
+    out = heuristic_desk([snap], events=[], cash=55000, lang="en")
+    assert out.decisions[0].delta_bucket == DeltaBucket.CONSERVATIVE
+    assert "downtrend" in out.decisions[0].why
+
+
+def test_uptrend_does_not_reduce_put_desk():
+    snap = _outside_em_snap().model_copy(
+        update={"trend_context": TrendContext(label=TrendLabel.UP, sma_20=175, sma_50=170)}
+    )
+    out = heuristic_desk([snap], events=[], cash=55000, lang="en")
+    assert out.decisions[0].delta_bucket == DeltaBucket.STANDARD
+
+
+def test_uptrend_reduces_call_desk():
+    snap = _outside_em_snap().model_copy(
+        update={
+            "mode": DeskMode.CALL,
+            "trend_context": TrendContext(label=TrendLabel.UP, sma_20=175, sma_50=170),
+        }
+    )
+    out = heuristic_desk([snap], events=[], cash=0, lang="en", mode="call")
+    assert out.decisions[0].structure == Structure.COVERED_CALL
+    assert out.decisions[0].delta_bucket == DeltaBucket.CONSERVATIVE
+    assert "uptrend" in out.decisions[0].why
+
+
+def test_heuristic_prefers_conservative_when_history_breaches_often():
+    out = heuristic_desk([_outside_em_snap(breach=0.34)], events=[], cash=55000, lang="zh")
+    assert out.decisions[0].delta_bucket == DeltaBucket.CONSERVATIVE
+    assert "34%" in out.decisions[0].why
+
+
+def test_prompt_carries_trend_and_breach():
+    snap = _outside_em_snap(breach=0.34).model_copy(
+        update={"trend_context": TrendContext(label=TrendLabel.DOWN, sma_20=175, sma_50=185, return_5d=-0.04)}
+    )
+    text = snapshot_prompt([snap], [], 55000)
+    assert "trend=down" in text
+    assert "ret5d=-4.0%" in text
+    assert "hist_breach=34%(n=150,5d)" in text
 

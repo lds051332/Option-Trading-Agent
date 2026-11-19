@@ -63,6 +63,20 @@ export type ContractScore = {
   premium_yield: number;
   expected_move_pct: number;
   inside_expected_move: boolean;
+  history?: number | null;
+  hist_breach_rate?: number | null;
+  hist_breach_samples?: number;
+  hist_horizon_days?: number | null;
+  beyond_recent_range?: boolean | null;
+};
+
+export type TrendContext = {
+  label: "unknown" | "up" | "flat" | "down";
+  sma_20: number | null;
+  sma_50: number | null;
+  return_5d: number | null;
+  low_20: number | null;
+  high_20: number | null;
 };
 
 export type IvContext = {
@@ -133,6 +147,7 @@ export type TickerSnapshot = {
   shares?: number | null;
   cost_basis?: number | null;
   iv_context?: IvContext | null;
+  trend_context?: TrendContext | null;
 };
 
 export type ScoutedEvent = {

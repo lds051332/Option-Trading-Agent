@@ -48,6 +48,13 @@ class IvRegime(str, Enum):
     RICH = "rich"
 
 
+class TrendLabel(str, Enum):
+    UNKNOWN = "unknown"
+    UP = "up"
+    FLAT = "flat"
+    DOWN = "down"
+
+
 class MarketLabel(str, Enum):
     RISK_ON = "risk_on"
     NEUTRAL = "neutral"
@@ -109,6 +116,22 @@ class ContractScore(BaseModel):
     premium_yield: float
     expected_move_pct: float
     inside_expected_move: bool
+    history: int | None = None
+    hist_breach_rate: float | None = None
+    hist_breach_samples: int = 0
+    hist_horizon_days: int | None = None
+    beyond_recent_range: bool | None = None
+
+
+class TrendContext(BaseModel):
+    """The ticker's own trend from daily closes. Backward-looking, not a forecast."""
+
+    label: TrendLabel = TrendLabel.UNKNOWN
+    sma_20: float | None = None
+    sma_50: float | None = None
+    return_5d: float | None = None
+    low_20: float | None = None
+    high_20: float | None = None
 
 
 class IvContext(BaseModel):
@@ -183,6 +206,7 @@ class TickerSnapshot(BaseModel):
     shares: float | None = None
     cost_basis: float | None = None
     iv_context: IvContext | None = None
+    trend_context: TrendContext | None = None
 
 
 class ScoutedEvent(BaseModel):

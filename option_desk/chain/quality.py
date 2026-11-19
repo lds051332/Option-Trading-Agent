@@ -1,7 +1,8 @@
-"""Expected move, realized vol, IV regime, and contract score.
+"""Expected move, realized vol, IV regime, trend, breach base rate, and contract score.
 
 No network, no storage. IV regime is IV versus recent realized vol of the
-same ticker — not a historical IV percentile.
+same ticker — not a historical IV percentile. Trend and breach rate come
+from the same daily closes; they describe the past, not a forecast.
 """
 
 from __future__ import annotations
@@ -17,9 +18,11 @@ from option_desk.schemas import (
     IvRegime,
     MarketLabel,
     QuoteSource,
+    TrendContext,
+    TrendLabel,
 )
 
-# Contract score weights. Missing IV drops that slice and renormalizes.
+# Contract score weights. Missing IV or price history drops that slice and renormalizes.
 _SCORE_WEIGHTS = {
     "delta": 25,
     "iv": 20,
@@ -27,7 +30,13 @@ _SCORE_WEIGHTS = {
     "spread": 15,
     "expected_move": 10,
     "liquidity": 10,
+    "history": 10,
 }
+
+RANGE_WINDOW = 20
+MIN_BREACH_SAMPLES = 40
+# Breach base rate this many times the strike's delta counts as a reduce signal.
+BREACH_REDUCE_RATIO = 1.5
 
 
 def clamp(value: float, lo: float = 0.0, hi: float = 100.0) -> int:
@@ -167,6 +176,76 @@ def build_iv_context(
     )
 
 
+def classify_trend(
+    spot: float | None,
+    sma_20: float | None,
+    sma_50: float | None,
+) -> TrendLabel:
+    """Spot stacked above both averages is up, below both is down."""
+    if spot is None or sma_20 is None or sma_50 is None or spot <= 0:
+        return TrendLabel.UNKNOWN
+    if spot > sma_20 > sma_50:
+        return TrendLabel.UP
+    if spot < sma_20 < sma_50:
+        return TrendLabel.DOWN
+    return TrendLabel.FLAT
+
+
+def build_trend_context(spot: float, closes: Sequence[float]) -> TrendContext | None:
+    series = [c for c in closes if c > 0]
+    if len(series) < RANGE_WINDOW:
+        return None
+    sma_20 = sma(series, 20)
+    sma_50 = sma(series, 50)
+    recent = series[-RANGE_WINDOW:]
+    ret_5d = (series[-1] / series[-6] - 1.0) if len(series) >= 6 else None
+    return TrendContext(
+        label=classify_trend(spot, sma_20, sma_50),
+        sma_20=sma_20,
+        sma_50=sma_50,
+        return_5d=ret_5d,
+        low_20=min(recent),
+        high_20=max(recent),
+    )
+
+
+def trading_days(dte: int) -> int:
+    """Calendar DTE to an approximate count of trading sessions."""
+    return max(1, round(dte * 5 / 7))
+
+
+def historical_breach_rate(
+    closes: Sequence[float],
+    cushion: float,
+    horizon: int,
+    mode: DeskMode,
+) -> tuple[float | None, int]:
+    """Share of past close-to-close windows of `horizon` sessions that moved past `cushion`.
+
+    Overlapping windows. Put breach = drop of at least cushion; call breach = rise of at least cushion.
+    """
+    series = [c for c in closes if c > 0]
+    if horizon <= 0 or len(series) <= horizon:
+        return None, 0
+    samples = len(series) - horizon
+    if samples < MIN_BREACH_SAMPLES:
+        return None, samples
+    hits = 0
+    for start in range(samples):
+        move = series[start + horizon] / series[start] - 1.0
+        if mode is DeskMode.CALL:
+            hits += move >= cushion
+        else:
+            hits += move <= -cushion
+    return hits / samples, samples
+
+
+def breach_exceeds_delta(rate: float | None, delta: float) -> bool:
+    if rate is None or delta <= 0:
+        return False
+    return rate >= delta * BREACH_REDUCE_RATIO - 1e-9
+
+
 def _delta_score(delta: float, target: float, band: float) -> int:
     if band <= 0:
         return 100 if abs(delta - target) < 1e-9 else 0
@@ -203,6 +282,27 @@ def _liq_score(quote: ContractQuote) -> int:
     return clamp(50.0 * oi + 50.0 * vol)
 
 
+def _history_score(rate: float | None, delta: float) -> int | None:
+    # breach rate / delta: 0 → 100, 1.0 → 50, 2.0 → 0. Delta is the market's implied odds.
+    if rate is None or delta <= 0:
+        return None
+    return clamp(50.0 - (rate / delta - 1.0) * 50.0)
+
+
+def _beyond_recent_range(
+    strike: float,
+    closes: Sequence[float],
+    mode: DeskMode,
+) -> bool | None:
+    series = [c for c in closes if c > 0]
+    if len(series) < RANGE_WINDOW:
+        return None
+    recent = series[-RANGE_WINDOW:]
+    if mode is DeskMode.CALL:
+        return strike > max(recent)
+    return strike < min(recent)
+
+
 def score_contract(
     quote: ContractQuote,
     *,
@@ -211,12 +311,17 @@ def score_contract(
     band: float,
     mode: DeskMode,
     iv_hv_ratio: float | None,
+    closes: Sequence[float] | None = None,
 ) -> ContractScore:
     em_pct = expected_move_pct(quote.iv, quote.dte)
     cushion = cushion_pct(spot, quote.strike, mode)
     coverage = (cushion / em_pct) if em_pct > 0 else 0.0
     capital = quote.strike if mode is DeskMode.PUT else spot
     yield_pct = (quote.mid / capital) if capital > 0 else 0.0
+    horizon = trading_days(quote.dte)
+    breach, samples = (
+        historical_breach_rate(closes, cushion, horizon, mode) if closes else (None, 0)
+    )
     parts: dict[str, int | None] = {
         "delta": _delta_score(quote.delta, target_delta, band),
         "iv": _iv_score(iv_hv_ratio),
@@ -224,6 +329,7 @@ def score_contract(
         "spread": _spread_score(quote),
         "expected_move": _em_score(coverage),
         "liquidity": _liq_score(quote),
+        "history": _history_score(breach, quote.delta),
     }
     weighted = 0.0
     mass = 0.0
@@ -246,4 +352,9 @@ def score_contract(
         premium_yield=round(yield_pct, 6),
         expected_move_pct=round(em_pct, 6),
         inside_expected_move=em_pct > 0 and cushion < em_pct,
+        history=parts["history"],
+        hist_breach_rate=round(breach, 4) if breach is not None else None,
+        hist_breach_samples=samples,
+        hist_horizon_days=horizon if closes else None,
+        beyond_recent_range=_beyond_recent_range(quote.strike, closes, mode) if closes else None,
     )

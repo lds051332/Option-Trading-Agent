@@ -1,4 +1,4 @@
-import type { BucketCandidate, IvContext, MarketRegime, TickerSnapshot } from "./types";
+import type { BucketCandidate, IvContext, MarketRegime, TickerSnapshot, TrendContext } from "./types";
 import type { MsgKey } from "./i18n";
 import { useI18n } from "./locale";
 
@@ -13,6 +13,17 @@ function ivRegimeKey(regime: IvContext["regime"]): MsgKey {
   if (regime === "rich") return "desk.ivRich";
   if (regime === "normal") return "desk.ivNormal";
   return "desk.ivUnknown";
+}
+
+function trendKey(label: TrendContext["label"]): MsgKey {
+  if (label === "up") return "desk.trendUp";
+  if (label === "down") return "desk.trendDown";
+  if (label === "flat") return "desk.trendFlat";
+  return "desk.trendUnknown";
+}
+
+function price(value: number | null | undefined): string {
+  return value == null ? "—" : value.toFixed(2);
 }
 
 export function marketLabelKey(label: MarketRegime["label"]): MsgKey {
@@ -81,15 +92,40 @@ export function QualityPanel({ snapshot, mode }: { snapshot: TickerSnapshot; mod
           mode={mode}
         />
       ) : null}
+      {snapshot.trend_context ? <TrendBlock trend={snapshot.trend_context} mode={mode} /> : null}
     </div>
   );
 }
 
-function QualityStat({ label, value }: { label: string; value: string }) {
+function TrendBlock({ trend, mode }: { trend: TrendContext; mode: "put" | "call" }) {
+  const { t } = useI18n();
+  const against = mode === "call" ? trend.label === "up" : trend.label === "down";
+  const ret = trend.return_5d;
+  return (
+    <div className="trend-block">
+      <p className="quality-kicker">{t("desk.trendKicker")}</p>
+      <dl className="quality-grid">
+        <QualityStat label={t("desk.trendLabel")} value={t(trendKey(trend.label))} warn={against} />
+        <QualityStat label={t("desk.trendSma20")} value={price(trend.sma_20)} />
+        <QualityStat label={t("desk.trendSma50")} value={price(trend.sma_50)} />
+        <QualityStat
+          label={t("desk.trendRet5d")}
+          value={ret == null ? "—" : `${ret >= 0 ? "+" : ""}${(ret * 100).toFixed(1)}%`}
+        />
+        <QualityStat
+          label={t("desk.trendRange20")}
+          value={trend.low_20 != null && trend.high_20 != null ? `${price(trend.low_20)}–${price(trend.high_20)}` : "—"}
+        />
+      </dl>
+    </div>
+  );
+}
+
+function QualityStat({ label, value, warn = false }: { label: string; value: string; warn?: boolean }) {
   return (
     <div className="quality-stat">
       <dt>{label}</dt>
-      <dd>{value}</dd>
+      <dd className={warn ? "is-warn" : undefined}>{value}</dd>
     </div>
   );
 }
