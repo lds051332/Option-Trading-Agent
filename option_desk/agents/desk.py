@@ -48,7 +48,8 @@ Hard rules:
 - ignore events do not change the default: OPEN standard CSP if that delta bucket has a candidate.
 - CLOSE_EARLY is only valid when the user has an existing position; this CLI has no position feed, so do not use it.
 - assignment_ok must be true only if the chosen strike is still a price you would buy the stock.
-- If even the conservative strike is not a stock you would own, SKIP.
+- SKIP is allowed only for: calendar.hard_skip; an event labeled skip; spread_only with no valid spread; no candidate or not enough cash; or a stock-specific fundamental reason you would not own the shares even at the conservative strike, which you must name. Start why with the rule that forced the SKIP.
+- Reduce signals never justify SKIP, alone or stacked: trend DOWN, market CAUTION/RISK_OFF, iv_regime LOW/HIGH/RICH, inside_EM, hist_breach_elevated=yes, soft macro, events labeled reduce. A recent sell-off or high IV does not by itself make a strike unownable. Handle them by choosing conservative; a BULL_PUT_SPREAD on it is allowed when you want the gap capped.
 - Respect cash: sum of CSP assignment_cash across OPEN CSP names cannot exceed cash. Prefer SKIP on the second name rather than over-assign.
 - Compare premium_per_contract between buckets when recommending conservative; mention the tradeoff.
 - iv_regime is this ticker's option IV versus its own 20-day realized vol, NOT a historical IV percentile. LOW = options cheap vs recent stock vol; RICH = expensive. Prefer conservative or SKIP when LOW; do not treat HIGH/RICH as a reason to ignore calendar or events.
@@ -56,7 +57,7 @@ Hard rules:
 - contract score is a 0-100 ranking aid among the provided buckets. Never invent a strike to chase a higher score.
 - market.regime is VIX + SPY/QQQ trend. CAUTION/RISK_OFF: prefer conservative. Never hard-SKIP solely on market regime.
 - trend is this ticker's own spot vs its 20/50-day averages. DOWN (spot below both, 20 below 50): prefer conservative or a spread; say so. Never hard-SKIP solely on trend.
-- hist_breach is the share of past windows of the same length (last ~8 months of closes) in which the stock fell past this strike. Delta is the market's implied odds of finishing ITM. If hist_breach is at least 1.5x delta, this stock has moved more than the option price implies: prefer conservative and mention it. It is a backward-looking base rate, not a forecast.
+- hist_breach is the share of past windows of the same length (last ~8 months of closes) in which the stock fell past this strike, as a fraction like delta (0.13 = 13%). Delta is the market's implied odds of finishing ITM. ratio_to_delta and hist_breach_elevated are precomputed; use them, do not recompute. Only hist_breach_elevated=yes (ratio >= 1.5) means the stock has moved more than the option price implies: prefer conservative and mention it. A ratio below 1 means history breached less often than delta implies; never describe it as above delta. It is a backward-looking base rate, not a forecast.
 - beyond_20d_range means the put strike sits below the lowest close of the last 20 sessions. Inside the range is common for standard; mention it only as context. It is omitted when spot itself is at that low.
 """
 
@@ -79,13 +80,15 @@ Hard rules:
 - assignment_ok must be true only if being called away at that strike is acceptable versus cost basis (strike + credit >= cost_basis).
 - If even the conservative (higher) strike plus credit is below cost basis, you may still OPEN to collect premium and lower basis, but assignment_ok must be false and you must say so.
 - Contracts cannot exceed shares/100. The screener already sized quantity.
+- SKIP is allowed only for: calendar.hard_skip; an event labeled skip; no candidate or fewer than 100 shares. Start why with the rule that forced the SKIP.
+- Reduce signals never justify SKIP, alone or stacked: trend UP, market CAUTION/RISK_OFF, iv_regime LOW/HIGH/RICH, inside_EM, hist_breach_elevated=yes, soft macro, events labeled reduce or spread_only. Handle them by choosing conservative (higher strike).
 - Compare premium_per_contract between buckets when recommending conservative; mention the tradeoff.
 - iv_regime is this ticker's option IV versus its own 20-day realized vol, NOT a historical IV percentile. LOW = options cheap vs recent stock vol; RICH = expensive. Prefer conservative or SKIP when LOW.
 - expected_move is 1-sigma: spot * IV * sqrt(DTE/365). If inside_expected_move is true, the short strike still sits inside that band — say so. Prefer conservative when standard is inside EM and conservative is outside.
 - contract score is a 0-100 ranking aid among the provided buckets. Never invent a strike to chase a higher score.
 - market.regime is VIX + SPY/QQQ trend. CAUTION/RISK_OFF: prefer conservative. Never hard-SKIP solely on market regime.
 - trend is this ticker's own spot vs its 20/50-day averages. UP (spot above both, 20 above 50): the shares may run through a near strike; prefer conservative (higher strike) and say so. Never hard-SKIP solely on trend.
-- hist_breach is the share of past windows of the same length (last ~8 months of closes) in which the stock rose past this strike. Delta is the market's implied odds of finishing ITM. If hist_breach is at least 1.5x delta, assignment is likelier than the option price implies: prefer conservative and mention it. It is a backward-looking base rate, not a forecast.
+- hist_breach is the share of past windows of the same length (last ~8 months of closes) in which the stock rose past this strike, as a fraction like delta (0.13 = 13%). Delta is the market's implied odds of finishing ITM. ratio_to_delta and hist_breach_elevated are precomputed; use them, do not recompute. Only hist_breach_elevated=yes (ratio >= 1.5) means assignment is likelier than the option price implies: prefer conservative and mention it. A ratio below 1 means history breached less often than delta implies; never describe it as above delta. It is a backward-looking base rate, not a forecast.
 - beyond_20d_range means the call strike sits above the highest close of the last 20 sessions. Inside the range is common for standard; mention it only as context. It is omitted when spot itself is at that high.
 """
 
@@ -114,10 +117,13 @@ def _bucket_brief(snapshot: TickerSnapshot) -> str:
                 f" score={cand.score.total} dist={cand.score.strike_distance_pct:.1%} "
                 f"yield={cand.score.premium_yield:.2%} em={cand.score.expected_move_pct:.1%} {where}"
             )
-            if cand.score.hist_breach_rate is not None:
+            rate = cand.score.hist_breach_rate
+            if rate is not None and cand.csp.delta > 0:
+                elevated = "yes" if breach_exceeds_delta(rate, cand.csp.delta) else "no"
                 score_bit += (
-                    f" hist_breach={cand.score.hist_breach_rate:.0%}"
-                    f"(n={cand.score.hist_breach_samples},{cand.score.hist_horizon_days}d)"
+                    f" hist_breach={rate:.3f} ratio_to_delta={rate / cand.csp.delta:.2f}"
+                    f" hist_breach_elevated={elevated}"
+                    f" (n={cand.score.hist_breach_samples},{cand.score.hist_horizon_days}d)"
                 )
             if cand.score.beyond_recent_range is not None:
                 score_bit += f" beyond_20d_range={cand.score.beyond_recent_range}"

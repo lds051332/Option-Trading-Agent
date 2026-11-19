@@ -743,11 +743,13 @@ function tokenText(call: ModelCall, t: (key: MsgKey, vars?: Record<string, strin
 
 function CallLine({ call }: { call: ModelCall }) {
   const { t } = useI18n();
-  const tokens = call.method === "heuristic" ? "" : tokenText(call, t);
+  const tokens = call.method === "heuristic" || call.method === "cached" ? "" : tokenText(call, t);
   const line =
     call.method === "heuristic"
       ? t("desk.callHeuristic")
-      : tokens
+      : call.method === "cached"
+        ? t("desk.callCached")
+        : tokens
         ? t("desk.callMeta", { method: call.method, ms: call.elapsed_ms, tokens })
         : t("desk.callMetaBare", { method: call.method, ms: call.elapsed_ms });
   return (

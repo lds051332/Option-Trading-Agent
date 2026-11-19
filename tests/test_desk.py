@@ -389,5 +389,19 @@ def test_prompt_carries_trend_and_breach():
     text = snapshot_prompt([snap], [], 55000)
     assert "trend=down" in text
     assert "ret5d=-4.0%" in text
-    assert "hist_breach=34%(n=150,5d)" in text
+    assert "hist_breach=0.340 ratio_to_delta=1.70 hist_breach_elevated=yes (n=150,5d)" in text
+
+
+def test_prompt_flags_low_breach_as_not_elevated():
+    text = snapshot_prompt([_outside_em_snap(breach=0.13)], [], 55000)
+    assert "hist_breach=0.130 ratio_to_delta=0.65 hist_breach_elevated=no" in text
+
+
+def test_system_prompts_forbid_skip_on_reduce_signals_alone():
+    from option_desk.agents.desk import CALL_SYSTEM, SYSTEM
+
+    for prompt in (SYSTEM, CALL_SYSTEM):
+        assert "Reduce signals never justify SKIP" in prompt
+        assert "Start why with the rule that forced the SKIP" in prompt
+    assert "If even the conservative strike is not a stock you would own, SKIP." not in SYSTEM
 

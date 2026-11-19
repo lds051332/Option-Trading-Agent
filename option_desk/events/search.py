@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from option_desk.events import cache
+
 
 @dataclass
 class SearchHit:
@@ -54,7 +56,7 @@ def _ddgs_search(query: str, limit: int) -> list[SearchHit]:
     return hits
 
 
-def search_web(query: str, tavily_api_key: str | None, limit: int = 5) -> list[SearchHit]:
+def _search_live(query: str, tavily_api_key: str | None, limit: int) -> list[SearchHit]:
     if tavily_api_key:
         try:
             return _tavily_search(query, tavily_api_key, limit)
@@ -64,3 +66,15 @@ def search_web(query: str, tavily_api_key: str | None, limit: int = 5) -> list[S
         return _ddgs_search(query, limit)
     except Exception:
         return []
+
+
+def search_web(query: str, tavily_api_key: str | None, limit: int = 5) -> list[SearchHit]:
+    """Same query on the same market day returns the cached hits. Empty results are not cached."""
+    key = cache.cache_key("search", query, limit, cache.market_day())
+    cached = cache.get(key)
+    if cached is not None:
+        return [SearchHit(**item) for item in cached]
+    hits = _search_live(query, tavily_api_key, limit)
+    if hits:
+        cache.put(key, [hit.as_dict() for hit in hits])
+    return hits

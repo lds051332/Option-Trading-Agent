@@ -3,12 +3,14 @@ from __future__ import annotations
 from datetime import date
 
 from langchain_core.messages import HumanMessage, SystemMessage
+from pydantic import BaseModel, Field
 
 from option_desk.agents.structured import ModelCall, invoke_structured_traced
 from option_desk.config import Settings, missing_llm_key_hint
+from option_desk.events import cache
 from option_desk.events.search import SearchHit, search_web
-from option_desk.i18n import language_instruction, t
-from option_desk.schemas import EventAction, EventList, EventMechanism, ScoutedEvent
+from option_desk.i18n import normalize_lang, t
+from option_desk.schemas import EventAction, EventMechanism, ScoutedEvent
 
 
 QUERY_TEMPLATES = (
@@ -40,7 +42,28 @@ Rules:
 - tickers must be a subset of the universe provided.
 - action is exactly one of ignore, reduce, spread_only, skip.
 - mechanism is exactly one of gap, repricing, noise.
+- Write title and detail in English. Also fill title_zh and detail_zh with the same content in Simplified Chinese.
+  Keep tickers, numbers, and enum values unchanged in both.
 """
+
+
+class BilingualEvent(ScoutedEvent):
+    title_zh: str = ""
+    detail_zh: str = ""
+
+
+class BilingualEventList(BaseModel):
+    """One classification serves every output language, so zh and en runs see the same actions."""
+
+    events: list[BilingualEvent] = Field(default_factory=list)
+
+
+def _localize(event: BilingualEvent, lang: str) -> ScoutedEvent:
+    data = event.model_dump(exclude={"title_zh", "detail_zh"})
+    if normalize_lang(lang) == "zh":
+        data["title"] = event.title_zh.strip() or event.title
+        data["detail"] = event.detail_zh.strip() or event.detail
+    return ScoutedEvent.model_validate(data)
 
 
 def _queries(tickers: list[str], as_of: date) -> list[str]:
@@ -93,9 +116,16 @@ def classify_scout_hits(
         warnings.append(missing_llm_key_hint() + t(settings.output_language, "skipped_classify"))
         return [], warnings, ModelCall(method="heuristic", elapsed_ms=0)
 
+    lang = settings.output_language
     digest = "\n".join(
         f"- [{h.query}] {h.title} | {h.snippet} | {h.url}" for h in hits[:24]
     )
+    key = cache.cache_key("classify", sorted(tickers), as_of.isoformat(), settings.min_dte, settings.max_dte, digest)
+    cached = cache.get(key)
+    if cached is not None:
+        parsed = BilingualEventList.model_validate(cached)
+        events = [_normalize(_localize(event, lang), tickers) for event in parsed.events]
+        return events, warnings, ModelCall(method="cached", elapsed_ms=0)
     prompt = (
         f"Universe: {', '.join(tickers)}\n"
         f"As-of date: {as_of.isoformat()}\n"
@@ -105,19 +135,20 @@ def classify_scout_hits(
     try:
         parsed, call = invoke_structured_traced(
             llm,
-            EventList,
+            BilingualEventList,
             [
-                SystemMessage(content=SYSTEM + language_instruction(settings.output_language)),
+                SystemMessage(content=SYSTEM),
                 HumanMessage(content=prompt),
             ],
             provider=settings.llm_endpoint().provider,
         )
     except Exception as exc:
-        warnings.append(t(settings.output_language, "scout_failed").format(exc=exc))
+        warnings.append(t(lang, "scout_failed").format(exc=exc))
         failed = getattr(exc, "call", None)
         call = failed if isinstance(failed, ModelCall) else ModelCall(method="failed", elapsed_ms=0, error=str(exc))
         return [], warnings, call
-    events = [_normalize(event, tickers) for event in parsed.events]
+    cache.put(key, parsed.model_dump(mode="json"))
+    events = [_normalize(_localize(event, lang), tickers) for event in parsed.events]
     return events, warnings, call
 
 
